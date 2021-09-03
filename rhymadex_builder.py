@@ -57,7 +57,7 @@ class rhymadexMariaDB:
 
         self.cursor = self.connection.cursor()
 
-    def query(self, query, queryParams=None, queryIdentifier=""):
+    def query(self, query, queryParams=None, queryIdentifier="", commitNow=False):
         # My little query wrapper method.
         # I want to wrap my queries with a db class method so I'm not directly using any particular DB's
         #   methods directly in my code.  This way I can more easily change DB technology later.
@@ -68,10 +68,10 @@ class rhymadexMariaDB:
         #   db.query("SHOW DATABASES LIKE '{}'".format(db.escape_string(dbname))")
         #   But what can I do?  Hard-coding the dbname/etc feels icky.
         # For values (field values in SELECT / INSERT / UPDATES etc) use the queryParams.
-        #   Unfortunately these seem to differ between DBMS.  So for Mariadb it will be ? and MySQL is %s
 
         try:
             self.cursor.execute(query.format(self.connection.escape_string(queryIdentifier)), queryParams)
+            if commitNow: self.connection.commit() # Gotta commit after INSERTs, etc.  Or, DIY
             return(self.cursor)
         except mariadb.Error as e:
             # Stop immediately on an error
@@ -88,11 +88,21 @@ class rhymadexMariaDB:
             # Did not find the database, so create it
             print("INFO- Database not found.  Creating.")
             self.query("CREATE DATABASE `{}`", None, self.database)
+            self.query("USE `{}`", None, self.database)
+
+            # Create schema table to track schema version
+            self.query("CREATE TABLE tblSchemaVersion (versionNum mediumint primary key, dtmInit datetime)")
+            self.query("INSERT INTO tblSchemaVersion (versionNum, dtmInit) values (?, now())",
+                       (self.schemaCurrentVersion,), "", True)
+
         else:
             # The database exists.  Open it
             print("INFO- Database found.  Opening.")
             self.query("USE `{}`", None, self.database)
-            self.query("SHOW TABLES")
+
+            # Check most recent schema version
+            currentVersion = self.query("SELECT max(versionNum) AS versionNum, dtmInit FROM tblSchemaVersion").fetchall()[0]
+            print(currentVersion)
 
 
 
