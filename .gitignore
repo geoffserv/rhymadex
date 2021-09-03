@@ -1,2 +1,4 @@
 /mariadb.cfg
 /venv/
+/.idea/
+/Pipfile.lock
