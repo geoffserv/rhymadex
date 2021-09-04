@@ -46,10 +46,10 @@ class rhymadexMariaDB:
             # Connect but don't open a database yet
             print("INFO- Connecting to database server:", self.host, "port", self.port, "as", self.username)
             self.connection = mariadb.connect(
-                user = self.username,
-                password = self.password,
-                host = self.host,
-                port = int(self.port)
+                user=self.username,
+                password=self.password,
+                host=self.host,
+                port=int(self.port)
             )
         except mariadb.Error as e:
             print("MariaDB connection error: ", e)
@@ -83,17 +83,57 @@ class rhymadexMariaDB:
     def initSchema(self):
         # Check if the target database already exists
         print("INFO- Checking for database", self.database)
-        if len(self.query("SHOW DATABASES LIKE '{}'", None, self.database).fetchall()) == 0:
+        if not self.query("SHOW DATABASES LIKE '{}'", None, self.database).fetchall():
             # TODO maybe a better way to check existence of a mariadb database?
             # Did not find the database, so create it
             print("INFO- Database not found.  Creating.")
             self.query("CREATE DATABASE `{}`", None, self.database)
             self.query("USE `{}`", None, self.database)
 
-            # Create schema table to track schema version
-            self.query("CREATE TABLE tblSchemaVersion (versionNum mediumint primary key, dtmInit datetime)")
-            self.query("INSERT INTO tblSchemaVersion (versionNum, dtmInit) values (?, now())",
+            print("INFO- Creating table tblSources")
+            # tblSources holds info about each text data source
+            self.query("CREATE TABLE `tblSources` \
+                        (`id` INT AUTO_INCREMENT NOT NULL, \
+                         `sourceName` VARCHAR(255) NOT NULL, \
+                         `dtmInit` DATETIME NOT NULL, \
+                         PRIMARY KEY (`id`))")
+
+            print("INFO- Creating table tblVersion")
+            # tblVersions stores the version of the overall database schema
+            self.query("CREATE TABLE `tblVersion` \
+                        (`versionNum` MEDIUMINT NOT NULL, \
+                         `dtmInit` DATETIME NOT NULL, \
+                         PRIMARY KEY (`versionNum`))")
+
+            # The rhymadex database schema version itself
+            self.query("INSERT INTO `tblVersion` (versionNum, dtmInit) VALUES (?, NOW())",
                        (self.schemaCurrentVersion,), "", True)
+
+            print("INFO- Creating table tblLines")
+            # Create tblLines to hold lyric lines
+            # Use a surrogate PRIMARY KEY `id`
+            # lastWord is VARCHAR(34) ("Supercalifragilisticexpialidocious")
+            # line is VARCHAR(255), the longest lyric line we'll consider.  Make it unique
+            self.query("CREATE TABLE `tblLines` \
+                        (`id` INT NOT NULL AUTO_INCREMENT, \
+                         `lastWord` VARCHAR(34) NOT NULL, \
+                         `line` VARCHAR(255) NOT NULL, \
+                         `syllables` SMALLINT NOT NULL, \
+                         `source` INT NOT NULL, \
+                         PRIMARY KEY (`id`), \
+                         UNIQUE KEY (`line`), \
+                         KEY (`lastWord`), \
+                         CONSTRAINT `fk_line_source` FOREIGN KEY (`source`) REFERENCES `tblSources` (`id`))")
+
+            print("INFO- Creating table tblRhymes")
+            # TODO Definitely a better way to handle this
+            # other than duplicating the rhyme dictionary in to my own database
+            # and this structure also will create duplicates (cat -> fat, fat -> cat)
+            # But I want to avoid using a rhyme package during runtime later, on the 'net
+            self.query("CREATE TABLE `tblRhymes` \
+                        (`word` VARCHAR(34) NOT NULL, \
+                         `rhyme` VARCHAR(34) NOT NULL, \
+                         PRIMARY KEY (`word`, `rhyme`))")
 
         else:
             # The database exists.  Open it
@@ -101,10 +141,9 @@ class rhymadexMariaDB:
             self.query("USE `{}`", None, self.database)
 
             # Check most recent schema version
-            currentVersion = self.query("SELECT max(versionNum) AS versionNum, dtmInit FROM tblSchemaVersion").fetchall()[0]
-            print(currentVersion)
-
-
+            currentVersion = self.query("SELECT max(`versionNum`) AS `versionNum`, \
+                                         `dtmInit` FROM `tblVersion`").fetchall()[0]
+            print("INFO- Found rhymadex version", currentVersion[0], "created", currentVersion[1])
 
 if __name__ == "__main__":
     db = rhymadexMariaDB('mariadb.cfg')
