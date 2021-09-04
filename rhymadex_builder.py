@@ -150,17 +150,79 @@ class rhymadexMariaDB:
 
 class rhymadex:
     def __init__(self, rhymadexDB):
+        print("INFO- Initializing Rhymadex")
         self.rhymadexDB = rhymadexDB
 
     def buildRhymadex(self, sourceFile):
         print("INFO- Opening file for processing:", sourceFile)
 
-        # TODO handle missing files gracefully, etc
+        try:
+            sourceTextFile = open(sourceFile, 'r')
+        except OSError as e:
+            print("ERROR- OSError when opening file for reading:", sourceFile)
+            print("ERROR- OSError:", e)
+            print("Nothing more to do.  Exiting")
+            exit()
 
-        # Read the entire source file in to a string for splitting and manipulation
-        # This is very inefficient but hello-world quality for now
-        # Read in and kill the newlines because they're unimportant
-        sourceTextFile = open(sourceFile, 'r')
+        # TODO Brainstorm on the kinds of manipulation to perform on the input text
+
+        # I consider a couple approaches:
+        #   Load text in to the database relatively un-manipulated and intact, and perform
+        #     sanitization during output, giving the user more control.  For example, maybe they
+        #     really want there to be a lot of sentence-initial conjunctions.
+        #     This also means that later decisions on what is "good" can be made without rebuilding
+        #     the whole rhymadex database for potentially hundreds of source texts.
+        #   vs.
+        #   Thoroughly sanitize text before loading in to the database, so that hopefully all
+        #     of the candidate sentences are stored in the cleanest and most useful way possible,
+        #     as determined by me, now.
+
+        # I'm going to attempt to sanitize pre-database for two related reasons:
+        #   I don't want to be spending time on the front-end doing syllable calculations and don't
+        #     want to make the webservers deal with a lot of memory load/processing.
+        #   I'm hoping to leverage the DBMS for a lot of the lookup/join/sort load, so I'll be calculating
+        #     syllable counts ahead of time and storing them in the database.  Leaving a lot of clutter in the
+        #     rhymadex database means I'll have to post-process every line at runtime to scrub out the junk
+        #     and then calculate syllables again, potentially millions+ of times for a single pageload
+
+        # Brainstorm ruleset for input processing:
+
+        # Remove newlines because they're irrelevant.
+        #   Strip out all non-printable ANSI entirely
+        #   Strip out all non-ANSI as well.  Not gunna try and rhyme asian language unicode for ex.
+        #   Surprisingly, in testing I've found the rhyme dictionary producing matches for some non-English
+        #     Latin language words, so maybe OK to leave accented Latin chars in the source "just in case".
+        #     It will be discarded later if there are no rhymes anyway, and it could make for some
+        #     interesting results if there are matchable rhymes.
+        # Remove almost all non-grammatical punctuation
+        #   ~ ` @ # ^ & * - _ = + [ ] { } | \ < > /
+        #   What about punctuation that may indicate grammatical shorthand?
+        #   @ & - + = ("at", "and", "minus", "plus", "equals" ...)
+        #   Like "Meet me @ the coffee shop" or "This & that" or "RSVP for myself +1"
+        #   Maybe I can detect this by checking for "(words)(space)&(space)(words)
+        #     and determine whether it's just garbage/formatting vs. grammatical punctuation
+        #     and then do word replacement so the rhyme+syllable calculations will work
+        # What about numbers?  In testing, page numbers, verse numbers, etc get mixed up in the text
+        #   Remove all non-words from the beginning of every line.
+        #   Nothing useful will start with any of the above punctuation nor any grammatical punctuation
+        #   Such as , . ; : ? !
+        #   Valid lines may start with a number, but often in my testing it's part of a chapter number or
+        #     page number like "1 It was the best of times" and that mucks up what could have been
+        #     interesting output.  A valid case might be like "2 is company but 3 is a crowd", in which case
+        #     stripping the sentence-initial digit mucks up the output.
+        #     Maybe look for "(word)(grammatical punctuation)(space/s)(number)(space)(word)" as the only
+        #     potentially valid sentence-initial number case
+        # What about em dash? yen sign? And big weird variety of printable ANSI
+        #   Maybe the best approach is to only consider what is useful and strip out everything else
+        #   Ultimately if someone trys to stuff a bunch of non-language garbage in to the rhymadex
+        #     the output will be a bunch of non-language garbage
+        # Sentence-initial non-word exception cases: " ' ( $
+        # Comma-conjunctions like ", and" ", but" ", because" ", so"
+        #   Later I'll be splitting on commas, meaning a LOT of segments will begin with a conjunction
+        #   Sometimes this is fruitful, but most of the time it means most/every line starts with "and"
+        #   Poetically, I propose that removing sentence-initial conjunctions saves useful syllables and
+        #     allows for a wider range of interpretability in many cases.
+
         sourceTextBlob = sourceTextFile.read().replace('\n', ' ')
         sourceTextFile.close()
 
@@ -180,3 +242,5 @@ class rhymadex:
 if __name__ == "__main__":
     rhymadexDB = rhymadexMariaDB('mariadb.cfg')
     rhymadexDB.initSchema()
+    rhymadex = rhymadex(rhymadexDB)
+    rhymadex.buildRhymadex("something.txt")
