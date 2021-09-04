@@ -3,6 +3,7 @@
 # Upgrade Rhymadex database schema if needed
 # Build or re-build source text data structure
 
+from Phyme import Phyme
 import configparser
 import mariadb
 import sys
@@ -123,7 +124,9 @@ class rhymadexMariaDB:
                          PRIMARY KEY (`id`), \
                          UNIQUE KEY (`line`), \
                          KEY (`lastWord`), \
-                         CONSTRAINT `fk_line_source` FOREIGN KEY (`source`) REFERENCES `tblSources` (`id`))")
+                         CONSTRAINT `fk_line_source` FOREIGN KEY (`source`) REFERENCES `tblSources` (`id`) \
+                         ON DELETE CASCADE \
+                         ON UPDATE RESTRICT)")
 
             print("INFO- Creating table tblRhymes")
             # TODO Definitely a better way to handle this
@@ -145,6 +148,35 @@ class rhymadexMariaDB:
                                          `dtmInit` FROM `tblVersion`").fetchall()[0]
             print("INFO- Found rhymadex version", currentVersion[0], "created", currentVersion[1])
 
+class rhymadex:
+    def __init__(self, rhymadexDB):
+        self.rhymadexDB = rhymadexDB
+
+    def buildRhymadex(self, sourceFile):
+        print("INFO- Opening file for processing:", sourceFile)
+
+        # TODO handle missing files gracefully, etc
+
+        # Read the entire source file in to a string for splitting and manipulation
+        # This is very inefficient but hello-world quality for now
+        # Read in and kill the newlines because they're unimportant
+        sourceTextFile = open(sourceFile, 'r')
+        sourceTextBlob = sourceTextFile.read().replace('\n', ' ')
+        sourceTextFile.close()
+
+        sourceSentences = re.split('[,.!]', sourceTextBlob)  # Break it apart at every comma,period,ep
+
+        print("INFO- Deduplicating sentence list ...")
+
+        debugTotalLinesSeen = len(sourceSentences)
+        sourceSentences = list(dict.fromkeys(sourceSentences))
+        debugTotalDiscardedLines = debugTotalLinesSeen - len(sourceSentences)
+
+        print("INFO- Building lyric dictionary ...")
+
+        # TODO continue work from here..
+        # better input cleanup
+
 if __name__ == "__main__":
-    db = rhymadexMariaDB('mariadb.cfg')
-    db.initSchema()
+    rhymadexDB = rhymadexMariaDB('mariadb.cfg')
+    rhymadexDB.initSchema()
