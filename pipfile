@@ -4,10 +4,13 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-syllables = "*"
 Phyme = "*"
 configparser = "*"
 mariadb = "*"
+sys = "*"
+re = "*"
+syllables = "*"
+time = "*"
 
 [dev-packages]
 

@@ -7,6 +7,9 @@ from Phyme import Phyme
 import configparser
 import mariadb
 import sys
+import re
+import syllables
+import time
 
 class rhymadexMariaDB:
     def __init__(self, configfile):
@@ -38,7 +41,8 @@ class rhymadexMariaDB:
                 self.host = dbConfig['mariadb']['host']
                 self.database = dbConfig['mariadb']['database']
                 self.port = dbConfig['mariadb']['port']
-            except:
+            except configparser.Error as e:
+                print("ERROR- Configparser error:", e)
                 sys.exit("Could not find database credential attributes in configfile.  Exiting.")
         else:
             sys.exit("Could not open configfile to read database credentials.  Exiting.")
@@ -53,7 +57,7 @@ class rhymadexMariaDB:
                 port=int(self.port)
             )
         except mariadb.Error as e:
-            print("MariaDB connection error: ", e)
+            print("ERROR- MariaDB connection error: ", e)
             sys.exit("Database connection error.  Exiting.")
 
         self.cursor = self.connection.cursor()
@@ -73,7 +77,7 @@ class rhymadexMariaDB:
         try:
             self.cursor.execute(query.format(self.connection.escape_string(queryIdentifier)), queryParams)
             if commitNow: self.connection.commit() # Gotta commit after INSERTs, etc.  Or, DIY
-            return(self.cursor)
+            return self.cursor
         except mariadb.Error as e:
             # Stop immediately on an error
             print("MariaDB query error: ", e)
@@ -97,6 +101,7 @@ class rhymadexMariaDB:
                         (`id` INT AUTO_INCREMENT NOT NULL, \
                          `sourceName` VARCHAR(255) NOT NULL, \
                          `dtmInit` DATETIME NOT NULL, \
+                         UNIQUE KEY (`sourceName`), \
                          PRIMARY KEY (`id`))")
 
             print("INFO- Creating table tblVersion")
@@ -153,16 +158,41 @@ class rhymadex:
         print("INFO- Initializing Rhymadex")
         self.rhymadexDB = rhymadexDB
 
+        self.rhyme = Phyme()
+
+        self.debugTotalLinesProcessed = 0  # Including garbage lines discarded during processing
+        self.debugTotalWordsProcessed = 0
+        self.debugTotalSyllablesSeen = 0  # Total count of every syllable of every word we've seen
+        self.debugTotalDiscardedLines = 0  # Discarded dupes, unrhymables, out of meter, etc.  All discarded lines
+        self.debugTotalUniqueLines = 0  # Unique lines we've seen
+        self.debugTotalUnrhymable = 0  # LastWords encountered which have no data in the rhyme dictionary
+        self.debugTotalOutOfMeter = 0  # Lines that don't match our desired meter
+        self.debugWontFitLines = 0 # Under 1 or over 256 char lines, won't fit in the DB
+        self.debugProcStartTime = 0  # Clocks for tracking execution time
+        self.debugProcEndTime = 0
+
     def buildRhymadex(self, sourceFile):
+
+        self.debugProcStartTime = time.time()
+
         print("INFO- Opening file for processing:", sourceFile)
 
         try:
-            sourceTextFile = open(sourceFile, 'r')
+            sourceTextFile = open(sourceFile, 'r', encoding = "ISO-8859-1")
+            sourceTextBlob = sourceTextFile.read().replace('\n', ' ')
+            sourceTextFile.close()
         except OSError as e:
             print("ERROR- OSError when opening file for reading:", sourceFile)
             print("ERROR- OSError:", e)
-            print("Nothing more to do.  Exiting")
-            exit()
+            exit("Nothing more to do.  Exiting")
+
+        # Capture the data source and get the source primary key ID from the database
+        sourceId = self.rhymadexDB.query("INSERT INTO `tblSources` \
+                              (`sourceName`, `dtmInit`) \
+                              VALUES \
+                              (?, now()) \
+                              ON DUPLICATE KEY UPDATE \
+                              `dtmInit`=now()", (sourceFile,), "", True).lastrowid
 
         # TODO Brainstorm on the kinds of manipulation to perform on the input text
 
@@ -174,7 +204,7 @@ class rhymadex:
         #     the whole rhymadex database for potentially hundreds of source texts.
         #   vs.
         #   Thoroughly sanitize text before loading in to the database, so that hopefully all
-        #     of the candidate sentences are stored in the cleanest and most useful way possible,
+        #     of the candidate sentences are stored in the cleanest and most "useful" way possible,
         #     as determined by me, now.
 
         # I'm going to attempt to sanitize pre-database for two related reasons:
@@ -195,7 +225,7 @@ class rhymadex:
         #     It will be discarded later if there are no rhymes anyway, and it could make for some
         #     interesting results if there are matchable rhymes.
         # Remove almost all non-grammatical punctuation
-        #   ~ ` @ # ^ & * - _ = + [ ] { } | \ < > /
+        #   ~ ` @ # ^ & * - _ = + [ ] { } | \ < > / etc
         #   What about punctuation that may indicate grammatical shorthand?
         #   @ & - + = ("at", "and", "minus", "plus", "equals" ...)
         #   Like "Meet me @ the coffee shop" or "This & that" or "RSVP for myself +1"
@@ -219,28 +249,89 @@ class rhymadex:
         # Sentence-initial non-word exception cases: " ' ( $
         # Comma-conjunctions like ", and" ", but" ", because" ", so"
         #   Later I'll be splitting on commas, meaning a LOT of segments will begin with a conjunction
-        #   Sometimes this is fruitful, but most of the time it means most/every line starts with "and"
+        #   Sometimes this is fruitful, but it means often times each line starts with "and"
         #   Poetically, I propose that removing sentence-initial conjunctions saves useful syllables and
-        #     allows for a wider range of interpretability in many cases.
+        #     allows for a wider range of interpretability.
 
-        sourceTextBlob = sourceTextFile.read().replace('\n', ' ')
-        sourceTextFile.close()
 
-        sourceSentences = re.split('[,.!]', sourceTextBlob)  # Break it apart at every comma,period,ep
+
+        sourceSentences = re.split('[,.!?;]', sourceTextBlob)  # Break it apart at every comma,period,ep
 
         print("INFO- Deduplicating sentence list ...")
 
-        debugTotalLinesSeen = len(sourceSentences)
+        self.debugTotalLinesSeen = len(sourceSentences)
         sourceSentences = list(dict.fromkeys(sourceSentences))
-        debugTotalDiscardedLines = debugTotalLinesSeen - len(sourceSentences)
+        self.debugTotalDiscardedLines = self.debugTotalLinesSeen - len(sourceSentences)
 
         print("INFO- Building lyric dictionary ...")
+        print("INFO- Entries found:", len(sourceSentences))
 
-        # TODO continue work from here..
-        # better input cleanup
+        for sourceSentence in sourceSentences:
+
+            self.debugTotalLinesProcessed += 1
+
+            if ((len(sourceSentence) > 1) and (len(sourceSentence) < 256)):
+
+                sourceSentence = sourceSentence.strip()
+                sourceSentenceWords = sourceSentence.split()
+                if not sourceSentenceWords: continue  # Lil' hack for now, TODO refactor input checking
+                lastWord = sourceSentenceWords[-1]
+
+                self.debugTotalWordsProcessed += len(sourceSentenceWords)
+
+                # Sentence Syllable Estimation
+                # Can only estimate syllable count per-word, so run the estimator on every word in the sentence and accumulate
+                sourceSentenceSyllables = 0
+                for sourceSentenceWord in sourceSentenceWords:
+                    sourceSentenceSyllables += syllables.estimate(sourceSentenceWord)
+                    self.debugTotalSyllablesSeen += sourceSentenceSyllables
+
+                try:
+                    # What comes back is a dictionary of syllable counts with corresponding lists of rhyme words.
+                    # Kinda don't care about rhyme word syllable counts right now, so just collapse this to values() only
+                    sourceSentenceRhymeList = self.rhyme.get_perfect_rhymes(lastWord).values()
+                    # Now this is a list of lists, better to collapse to a single list of all the words
+                    sourceSentenceRhymeList = [item for sublist in sourceSentenceRhymeList for item in sublist]
+                # Maybe someday do fancy things with lastWord syllable count ...
+                except KeyError:
+                    # Can't find any rhyming words in the dictionary, so just discard this entirely and move along
+                    self.debugTotalUnrhymable += 1
+                    self.debugTotalDiscardedLines += 1
+                    continue  # Move along.  Nothing to see here.
+
+                # Insert lyrics, rhymes and syllables here
+                self.rhymadexDB.query("INSERT INTO tblLines \
+                                      (lastWord, line, syllables, source) \
+                                      VALUES (?, ?, ?, ?) \
+                                      ON DUPLICATE KEY UPDATE `line` = ?",
+                                      (lastWord, sourceSentence, int(sourceSentenceSyllables), int(sourceId), sourceSentence), "", True)
+                self.debugTotalUniqueLines += 1
+
+                if ((self.debugTotalUniqueLines == 1) or (self.debugTotalUniqueLines % 10000) == 0):
+                    print("")
+                    print("INFO- Processed: ", end="")
+                if ((self.debugTotalUniqueLines == 1) or self.debugTotalUniqueLines % 1000 == 0):
+                    print(self.debugTotalUniqueLines, ".. ", end="")
+            else:
+                self.debugWontFitLines += 1
+                self.debugTotalDiscardedLines += 1
+
+        print("Done.")
+        self.debugProcEndTime = time.time()
+
+        print("INFO- Completed building lyric dictionary in", self.debugProcEndTime - self.debugProcStartTime, "seconds")
+        print("INFO- Total Lines Processed:", self.debugTotalLinesProcessed)
+        print("INFO- Total Words Processed:", self.debugTotalWordsProcessed)
+        print("INFO- Total Syllables seen:", self.debugTotalSyllablesSeen)
+        print("INFO- Total Discarded lines:", self.debugTotalDiscardedLines)
+        print("INFO- Total Un-Rhymable words:", self.debugTotalUnrhymable)
+        print("INFO- Total Out-Of-Meter lines:", self.debugTotalOutOfMeter)
+        print("INFO- Total Won't-Fit-in-DB lines:", self.debugWontFitLines)
+        print("INFO- Total Unique lyric lines available:", self.debugTotalUniqueLines)
+        print("INFO- Lyric Dictionary is ready!")
 
 if __name__ == "__main__":
     rhymadexDB = rhymadexMariaDB('mariadb.cfg')
     rhymadexDB.initSchema()
     rhymadex = rhymadex(rhymadexDB)
-    rhymadex.buildRhymadex("something.txt")
+    rhymadex.buildRhymadex("textsources/bible/bible.txt")
