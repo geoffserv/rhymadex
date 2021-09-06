@@ -11,6 +11,7 @@ sys = "*"
 re = "*"
 syllables = "*"
 time = "*"
+string = "*"
 
 [dev-packages]
 

@@ -10,6 +10,7 @@ import sys
 import re
 import syllables
 import time
+import string
 
 class rhymadexMariaDB:
     def __init__(self, configfile):
@@ -104,17 +105,6 @@ class rhymadexMariaDB:
                          UNIQUE KEY (`sourceName`), \
                          PRIMARY KEY (`id`))")
 
-            print("INFO- Creating table tblVersion")
-            # tblVersions stores the version of the overall database schema
-            self.query("CREATE TABLE `tblVersion` \
-                        (`versionNum` MEDIUMINT NOT NULL, \
-                         `dtmInit` DATETIME NOT NULL, \
-                         PRIMARY KEY (`versionNum`))")
-
-            # The rhymadex database schema version itself
-            self.query("INSERT INTO `tblVersion` (versionNum, dtmInit) VALUES (?, NOW())",
-                       (self.schemaCurrentVersion,), "", True)
-
             print("INFO- Creating table tblLines")
             # Create tblLines to hold lyric lines
             # Use a surrogate PRIMARY KEY `id`
@@ -143,6 +133,17 @@ class rhymadexMariaDB:
                          `rhyme` VARCHAR(34) NOT NULL, \
                          PRIMARY KEY (`word`, `rhyme`))")
 
+            print("INFO- Creating table tblVersion")
+            # tblVersions stores the version of the overall database schema
+            self.query("CREATE TABLE `tblVersion` \
+                        (`versionNum` MEDIUMINT NOT NULL, \
+                         `dtmInit` DATETIME NOT NULL, \
+                         PRIMARY KEY (`versionNum`))")
+
+            # The rhymadex database schema version itself
+            self.query("INSERT INTO `tblVersion` (versionNum, dtmInit) VALUES (?, NOW())",
+                       (self.schemaCurrentVersion,), "", True)
+
         else:
             # The database exists.  Open it
             print("INFO- Database found.  Opening.")
@@ -152,6 +153,14 @@ class rhymadexMariaDB:
             currentVersion = self.query("SELECT max(`versionNum`) AS `versionNum`, \
                                          `dtmInit` FROM `tblVersion`").fetchall()[0]
             print("INFO- Found rhymadex version", currentVersion[0], "created", currentVersion[1])
+
+            if not int(currentVersion[0]) == int(self.schemaCurrentVersion):
+                print("ERROR- Database schema version doesn't match expected version:", self.schemaCurrentVersion)
+                exit("Won't continue with mismatching schema.  Exiting.")
+
+            # At this point, found the database, the schema version table, and the reported schema
+            #   version matches what I'm looking for.  Assuming now that everything in the database is
+            #   where I expect and how I expect it.  If not.. well.. welcome to crash town.
 
 class rhymadex:
     def __init__(self, rhymadexDB):
@@ -171,6 +180,32 @@ class rhymadex:
         self.debugProcStartTime = 0  # Clocks for tracking execution time
         self.debugProcEndTime = 0
 
+    def lineCleaner(self, line):
+        # Clean up a line of text before inserting it to the database
+        # Return a nice, clean line
+
+        # Only deal in printables.
+        line = "".join(aChar for aChar in line if aChar in string.printable)
+
+        # Only deal in lowers.
+        line = line.lower()
+
+        # Starts with a letter, then whatever, then ends in a "word character" (including digits)
+        # Truncates all non-letter junk at the start and end, including punctuation
+        line = "".join(re.findall(r"[a-z]+.*\w+", line))
+
+        # Remove almost all non-grammatical punctuation
+        line = re.sub(r"[~`#^*_\[\]{}|\\<>/]+", "", line)
+        line = re.sub(r"@", "at", line)
+        line = re.sub(r"&", "and", line)
+        line = re.sub(r"=", "equals", line)
+        line = re.sub(r"\+", "plus", line)
+
+        if line:
+            return line
+        else:
+            return None
+
     def buildRhymadex(self, sourceFile):
 
         self.debugProcStartTime = time.time()
@@ -178,13 +213,14 @@ class rhymadex:
         print("INFO- Opening file for processing:", sourceFile)
 
         try:
+            # TODO could actually do some kind of sane and safe handling of file encoding
             sourceTextFile = open(sourceFile, 'r', encoding = "ISO-8859-1")
             sourceTextBlob = sourceTextFile.read().replace('\n', ' ')
             sourceTextFile.close()
         except OSError as e:
             print("ERROR- OSError when opening file for reading:", sourceFile)
             print("ERROR- OSError:", e)
-            exit("Nothing more to do.  Exiting")
+            exit("Nothing more to do.  Exiting.")
 
         # Capture the data source and get the source primary key ID from the database
         sourceId = self.rhymadexDB.query("INSERT INTO `tblSources` \
@@ -194,68 +230,8 @@ class rhymadex:
                               ON DUPLICATE KEY UPDATE \
                               `dtmInit`=now()", (sourceFile,), "", True).lastrowid
 
-        # TODO Brainstorm on the kinds of manipulation to perform on the input text
-
-        # I consider a couple approaches:
-        #   Load text in to the database relatively un-manipulated and intact, and perform
-        #     sanitization during output, giving the user more control.  For example, maybe they
-        #     really want there to be a lot of sentence-initial conjunctions.
-        #     This also means that later decisions on what is "good" can be made without rebuilding
-        #     the whole rhymadex database for potentially hundreds of source texts.
-        #   vs.
-        #   Thoroughly sanitize text before loading in to the database, so that hopefully all
-        #     of the candidate sentences are stored in the cleanest and most "useful" way possible,
-        #     as determined by me, now.
-
-        # I'm going to attempt to sanitize pre-database for two related reasons:
-        #   I don't want to be spending time on the front-end doing syllable calculations and don't
-        #     want to make the webservers deal with a lot of memory load/processing.
-        #   I'm hoping to leverage the DBMS for a lot of the lookup/join/sort load, so I'll be calculating
-        #     syllable counts ahead of time and storing them in the database.  Leaving a lot of clutter in the
-        #     rhymadex database means I'll have to post-process every line at runtime to scrub out the junk
-        #     and then calculate syllables again, potentially millions+ of times for a single pageload
-
-        # Brainstorm ruleset for input processing:
-
-        # Remove newlines because they're irrelevant.
-        #   Strip out all non-printable ANSI entirely
-        #   Strip out all non-ANSI as well.  Not gunna try and rhyme asian language unicode for ex.
-        #   Surprisingly, in testing I've found the rhyme dictionary producing matches for some non-English
-        #     Latin language words, so maybe OK to leave accented Latin chars in the source "just in case".
-        #     It will be discarded later if there are no rhymes anyway, and it could make for some
-        #     interesting results if there are matchable rhymes.
-        # Remove almost all non-grammatical punctuation
-        #   ~ ` @ # ^ & * - _ = + [ ] { } | \ < > / etc
-        #   What about punctuation that may indicate grammatical shorthand?
-        #   @ & - + = ("at", "and", "minus", "plus", "equals" ...)
-        #   Like "Meet me @ the coffee shop" or "This & that" or "RSVP for myself +1"
-        #   Maybe I can detect this by checking for "(words)(space)&(space)(words)
-        #     and determine whether it's just garbage/formatting vs. grammatical punctuation
-        #     and then do word replacement so the rhyme+syllable calculations will work
-        # What about numbers?  In testing, page numbers, verse numbers, etc get mixed up in the text
-        #   Remove all non-words from the beginning of every line.
-        #   Nothing useful will start with any of the above punctuation nor any grammatical punctuation
-        #   Such as , . ; : ? !
-        #   Valid lines may start with a number, but often in my testing it's part of a chapter number or
-        #     page number like "1 It was the best of times" and that mucks up what could have been
-        #     interesting output.  A valid case might be like "2 is company but 3 is a crowd", in which case
-        #     stripping the sentence-initial digit mucks up the output.
-        #     Maybe look for "(word)(grammatical punctuation)(space/s)(number)(space)(word)" as the only
-        #     potentially valid sentence-initial number case
-        # What about em dash? yen sign? And big weird variety of printable ANSI
-        #   Maybe the best approach is to only consider what is useful and strip out everything else
-        #   Ultimately if someone trys to stuff a bunch of non-language garbage in to the rhymadex
-        #     the output will be a bunch of non-language garbage
-        # Sentence-initial non-word exception cases: " ' ( $
-        # Comma-conjunctions like ", and" ", but" ", because" ", so"
-        #   Later I'll be splitting on commas, meaning a LOT of segments will begin with a conjunction
-        #   Sometimes this is fruitful, but it means often times each line starts with "and"
-        #   Poetically, I propose that removing sentence-initial conjunctions saves useful syllables and
-        #     allows for a wider range of interpretability.
-
-
-
-        sourceSentences = re.split('[,.!?;]', sourceTextBlob)  # Break it apart at every comma,period,ep
+        # Break sentences apart on: , . ! ? ; : tabspace
+        sourceSentences = re.split('[,.!?;:\t]', sourceTextBlob)
 
         print("INFO- Deduplicating sentence list ...")
 
@@ -270,9 +246,10 @@ class rhymadex:
 
             self.debugTotalLinesProcessed += 1
 
-            if ((len(sourceSentence) > 1) and (len(sourceSentence) < 256)):
+            sourceSentence = self.lineCleaner(sourceSentence)
 
-                sourceSentence = sourceSentence.strip()
+            if (sourceSentence and (len(sourceSentence) < 256)):
+
                 sourceSentenceWords = sourceSentence.split()
                 if not sourceSentenceWords: continue  # Lil' hack for now, TODO refactor input checking
                 lastWord = sourceSentenceWords[-1]
