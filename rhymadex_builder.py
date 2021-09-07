@@ -71,12 +71,18 @@ class rhymadexMariaDB:
         #   Which is a monster headache.  Nobody seems to have a good answer.
         # So, for inserting user-specified identifiers like dbname (gathered from the script config file),
         #   I guess just use for ex.
-        #   db.query("SHOW DATABASES LIKE '{}'".format(db.escape_string(dbname))")
+        #   db.query("SHOW DATABASES LIKE '{}'", None, self.someIdentifier)
+        #   and it will be string-format substituted in.  Can mix-and-match with queryParams too for ex.
+        #   db.query("INSERT INTO `{}` (`someCol`) VALUES (?)", (someColValue,), someIdentifier, True)
         #   But what can I do?  Hard-coding the dbname/etc feels icky.
+        #   The queryIdentifier gets escape_string'ed so that's at least better than nothing.
+        #   If you have a good suggestion here please give me a PR!!
         # For values (field values in SELECT / INSERT / UPDATES etc) use the queryParams.
+        # If you wanna just commit after a batch of un-committed queries, send nothing as the query for ex.
+        #   db.query(None, None, "", True)
 
         try:
-            self.cursor.execute(query.format(self.connection.escape_string(queryIdentifier)), queryParams)
+            if query: self.cursor.execute(query.format(self.connection.escape_string(queryIdentifier)), queryParams)
             if commitNow: self.connection.commit() # Gotta commit after INSERTs, etc.  Or, DIY
             return self.cursor
         except mariadb.Error as e:
@@ -90,7 +96,7 @@ class rhymadexMariaDB:
         # Check if the target database already exists
         print("INFO- Checking for database", self.database)
         if not self.query("SHOW DATABASES LIKE '{}'", None, self.database).fetchall():
-            # TODO maybe a better way to check existence of a mariadb database?
+
             # Did not find the database, so create it
             print("INFO- Database not found.  Creating.")
             self.query("CREATE DATABASE `{}`", None, self.database)
@@ -112,6 +118,7 @@ class rhymadexMariaDB:
             # line is VARCHAR(255), the longest lyric line we'll consider.  Make it unique
             self.query("CREATE TABLE `tblLines` \
                         (`id` INT NOT NULL AUTO_INCREMENT, \
+                         `firstWord` VARCHAR(34) NOT NULL, \
                          `lastWord` VARCHAR(34) NOT NULL, \
                          `line` VARCHAR(255) NOT NULL, \
                          `syllables` SMALLINT NOT NULL, \
@@ -123,24 +130,43 @@ class rhymadexMariaDB:
                          ON DELETE CASCADE \
                          ON UPDATE RESTRICT)")
 
-            print("INFO- Creating table tblRhymes")
-            # TODO Definitely a better way to handle this
-            # other than duplicating the rhyme dictionary in to my own database
-            # and this structure also will create duplicates (cat -> fat, fat -> cat)
-            # But I want to avoid using a rhyme package during runtime later, on the 'net
-            self.query("CREATE TABLE `tblRhymes` \
-                        (`word` VARCHAR(34) NOT NULL, \
-                         `rhyme` VARCHAR(34) NOT NULL, \
-                         PRIMARY KEY (`word`, `rhyme`))")
+            print("INFO- Creating table tblRhymePools")
+            # RhymePools provides a unique ID used to group RhymeWords in to "pools" of rhyme-ability
+            # `rhymeHint` contains the portion of a source word from the leftmost vowel onwards to the end
+            #   just kinda for fun and to see what the results look like
+            self.query("CREATE TABLE `tblRhymePools` \
+                        (`id` INT AUTO_INCREMENT NOT NULL, \
+                         `rhymeHint` VARCHAR(34), \
+                         PRIMARY KEY (`id`))")
+
+            print("INFO- Creating table tblRhymeWords")
+            # RhymeWords stores each unique word+rhymeType and links to a rhymePool
+            # My idea is that words are part of pools wherein all words in a pool rhyme with each-other
+            # I have no proof that the idea proves always true but it will be a good starting point.
+            self.query("CREATE TABLE `tblRhymeWords` \
+                        (`id` INT AUTO_INCREMENT NOT NULL, \
+                         `word` VARCHAR(34) NOT NULL, \
+                         `syllables` INT NOT NULL, \
+                         `rhymeType` INT NOT NULL, \
+                         `rhymePool` INT NOT NULL, \
+                         PRIMARY KEY (`id`), \
+                         UNIQUE KEY (`word`, `rhymeType`), \
+                         CONSTRAINT `fk_rhyme_pool` FOREIGN KEY (`rhymePool`) REFERENCES `tblRhymePools` (`id`) \
+                         ON UPDATE RESTRICT)")
 
             print("INFO- Creating table tblVersion")
             # tblVersions stores the version of the overall database schema
+            # If we've made it this far, ostensibly the database schema is set up and ready to go
+            #   I'm so optimistic that I'll use a MEDIUMINT
+            # Later, check to see what this version is and compare with the global self.schemaCurrentVersion
+            #   If that matches up, assume everything is correct & where it should be.
+            #   If it matches up but something is broken/wrong with the schema, welcome to crash town.
             self.query("CREATE TABLE `tblVersion` \
                         (`versionNum` MEDIUMINT NOT NULL, \
                          `dtmInit` DATETIME NOT NULL, \
                          PRIMARY KEY (`versionNum`))")
 
-            # The rhymadex database schema version itself
+            # Record the rhymadex database schema version
             self.query("INSERT INTO `tblVersion` (versionNum, dtmInit) VALUES (?, NOW())",
                        (self.schemaCurrentVersion,), "", True)
 
@@ -157,7 +183,6 @@ class rhymadexMariaDB:
             if not int(currentVersion[0]) == int(self.schemaCurrentVersion):
                 print("ERROR- Database schema version doesn't match expected version:", self.schemaCurrentVersion)
                 exit("Won't continue with mismatching schema.  Exiting.")
-
             # At this point, found the database, the schema version table, and the reported schema
             #   version matches what I'm looking for.  Assuming now that everything in the database is
             #   where I expect and how I expect it.  If not.. well.. welcome to crash town.
@@ -230,11 +255,16 @@ class rhymadex:
                               ON DUPLICATE KEY UPDATE \
                               `dtmInit`=now()", (sourceFile,), "", True).lastrowid
 
+        # Remove any existing source lines 'cause we're gunna rebuild them now
+        deletedLines = self.rhymadexDB.query("DELETE FROM `tblLines` \
+                               WHERE (`source`=?)", (sourceId,), "", True).rowcount
+        print("INFO- Deleted", deletedLines, "existing source lines before beginning this build")
+
         # Break sentences apart on: , . ! ? ; : tabspace
         sourceSentences = re.split('[,.!?;:\t]', sourceTextBlob)
 
         print("INFO- Deduplicating sentence list ...")
-
+        # Do that little to-dict and back to-list trick to dedupe all the list items
         self.debugTotalLinesSeen = len(sourceSentences)
         sourceSentences = list(dict.fromkeys(sourceSentences))
         self.debugTotalDiscardedLines = self.debugTotalLinesSeen - len(sourceSentences)
@@ -242,46 +272,106 @@ class rhymadex:
         print("INFO- Building lyric dictionary ...")
         print("INFO- Entries found:", len(sourceSentences))
 
+        # Keep track of which RhymeWords have been encountered during Rhymadex building
+        #   so we don't do a ton of redundant lookups and database writes
+        seenRhymeWords = [list(result) for result in
+                          self.rhymadexDB.query("SELECT `word` FROM `tblRhymeWords` ORDER BY `word`").fetchall()]
+        seenRhymeWords = [item for sublist in seenRhymeWords for item in sublist]
+
         for sourceSentence in sourceSentences:
 
             self.debugTotalLinesProcessed += 1
 
+            # Use the lineCleaner on each line first.
+            # What comes back will be only printable ANSI with the ends trimmed, everything lowered,
+            #   and some common punctuation-to-text replacements done
             sourceSentence = self.lineCleaner(sourceSentence)
 
+            # Anything longer than 255 won't fit in the DB with this schema.
+            #   255's enough for anyone, anyway.  Right?  ... right?
             if (sourceSentence and (len(sourceSentence) < 256)):
 
                 sourceSentenceWords = sourceSentence.split()
-                if not sourceSentenceWords: continue  # Lil' hack for now, TODO refactor input checking
+                firstWord = sourceSentenceWords[0]
                 lastWord = sourceSentenceWords[-1]
 
                 self.debugTotalWordsProcessed += len(sourceSentenceWords)
 
                 # Sentence Syllable Estimation
-                # Can only estimate syllable count per-word, so run the estimator on every word in the sentence and accumulate
+                # Can only estimate syllable count per-word, so run the estimator on every word in
+                #   the sentence and accumulate.  The estimator is really inaccurate but good for POC
                 sourceSentenceSyllables = 0
                 for sourceSentenceWord in sourceSentenceWords:
                     sourceSentenceSyllables += syllables.estimate(sourceSentenceWord)
                     self.debugTotalSyllablesSeen += sourceSentenceSyllables
 
-                try:
-                    # What comes back is a dictionary of syllable counts with corresponding lists of rhyme words.
-                    # Kinda don't care about rhyme word syllable counts right now, so just collapse this to values() only
-                    sourceSentenceRhymeList = self.rhyme.get_perfect_rhymes(lastWord).values()
-                    # Now this is a list of lists, better to collapse to a single list of all the words
-                    sourceSentenceRhymeList = [item for sublist in sourceSentenceRhymeList for item in sublist]
-                # Maybe someday do fancy things with lastWord syllable count ...
-                except KeyError:
-                    # Can't find any rhyming words in the dictionary, so just discard this entirely and move along
-                    self.debugTotalUnrhymable += 1
-                    self.debugTotalDiscardedLines += 1
-                    continue  # Move along.  Nothing to see here.
+                # Look up rhymes for the firstWord and the lastWord
+                for rhymeTarget in [firstWord, lastWord]:
+                    # But only if we haven't seen that word before
+                    if rhymeTarget not in seenRhymeWords:
+                        # Record the fact that we've seen it now.
+                        seenRhymeWords.append(rhymeTarget)
+
+                        try:
+                            # RhymeTypes:
+                            #   1 = same vowels and consonants of the same type regardless of voicing (HAWK, DOG)
+                            #   2 = same vowels and consonants as well as any extra consonants (DUDES, DUES)
+                            #   3 = same vowels and a subset of the same consonants (DUDE, DO)
+                            #   4 = same vowels and some of the same consonants,
+                            #       with some swapped for other consonants (FACTOR, FASTER)
+                            #   5 = same vowels and arbitrary consonants (CASH, CATS)
+                            #   6 = not the same vowels but the same consonants (CAT, BOT)
+                            # What comes back is a dictionary of syllable counts with
+                            #   corresponding lists of rhyme words.
+                            rhymeTargetRhymeList = self.rhyme.get_perfect_rhymes(lastWord).values()
+                            # The exception should catch lookup errors but just to be safe..
+                            if rhymeTargetRhymeList:
+                                # The rhymeHint is the segment of the word from the leftmost vowel to the end
+                                #   This is a dumb chunky approach but just for fun..
+                                #   Might not be unique, might not be anything at all.  Just a hint.  Something to
+                                #   look at when browsing the pool.
+                                #   It's really only the rhymePool id that matters to me.
+                                rhymeHint = (re.findall("[aeiou]+[qwrtypsdfghjklzxcvbnm]+$", rhymeTarget) \
+                                            or ["Unknown"])[0]
+                                # Establish a new RhymePool for our words to chill out in
+                                rhymePoolId = self.rhymadexDB.query("INSERT INTO `tblRhymePools` \
+                                                                     (`rhymeHint`) VALUES \
+                                                                     (?)", (rhymeHint,), "", True).lastrowid
+                                # rhymeTargetRhymeList is a list of lists, collapse to a single list of all the words
+                                rhymeTargetRhymeList = [item for sublist in rhymeTargetRhymeList for item in sublist]
+                                # Add the rhymeTarget to the rhymeTargetRhymeList too so it all gets added
+                                #   to the rhymePool together
+                                rhymeTargetRhymeList.append(rhymeTarget)
+                                for rhymeResult in rhymeTargetRhymeList:
+                                    # Iterate through each rhymeResult
+                                    # Record that we've seen it so we don't re-calculate rhymes on this again later
+                                    seenRhymeWords.append(rhymeResult)
+                                    # Strip out non-characters.  Some of the returned results have (1) and other crap
+                                    rhymeResult = re.findall("[a-z]*", rhymeResult)[0]
+                                    # Estimate syllables
+                                    rhymeResultSyllables = syllables.estimate(rhymeResult)
+                                    # And insert to our rhymeList
+                                    self.rhymadexDB.query("INSERT INTO `tblRhymeWords` \
+                                                           (`word`, `syllables`, `rhymeType`, `rhymePool`) VALUES \
+                                                           (?, ?, 1, ?) \
+                                                           ON DUPLICATE KEY UPDATE `word` = ?",
+                                                           (rhymeResult, rhymeResultSyllables, rhymePoolId,
+                                                            rhymeResult), "", True)
+
+                        except KeyError:
+                            # Can't find any rhyming words in the dictionary,
+                            #   so just discard this entirely and move along
+                            self.debugTotalUnrhymable += 1
+                            self.debugTotalDiscardedLines += 1
+                            continue  # Move along.  Nothing to see here.
 
                 # Insert lyrics, rhymes and syllables here
-                self.rhymadexDB.query("INSERT INTO tblLines \
-                                      (lastWord, line, syllables, source) \
-                                      VALUES (?, ?, ?, ?) \
+                self.rhymadexDB.query("INSERT INTO `tblLines` \
+                                      (`firstWord`, `lastWord`, `line`, `syllables`, `source`) \
+                                      VALUES (?, ?, ?, ?, ?) \
                                       ON DUPLICATE KEY UPDATE `line` = ?",
-                                      (lastWord, sourceSentence, int(sourceSentenceSyllables), int(sourceId), sourceSentence), "", True)
+                                      (firstWord, lastWord, sourceSentence, int(sourceSentenceSyllables),
+                                       int(sourceId), sourceSentence), "", True)
                 self.debugTotalUniqueLines += 1
 
                 if ((self.debugTotalUniqueLines == 1) or (self.debugTotalUniqueLines % 10000) == 0):
