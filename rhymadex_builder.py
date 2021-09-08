@@ -273,7 +273,7 @@ class rhymadex:
         # Break Lines apart on: , . ! ? ; : tabspace
         #   IMO some of the most interesting magic happens on the comma split because it results in
         #   poetic sentence fragments
-        sourceLines = re.split('[,.!?;:\t]', sourceTextBlob)
+        sourceLines = re.split('[,.!?;:\t\n]', sourceTextBlob)
 
         print("INFO- Deduplicating Line list ...")
         # Do that little to-dict and back to-list trick to dedupe all the list items
@@ -311,79 +311,87 @@ class rhymadex:
 
                 self.debug['TotalWordsProcessed'] += len(sourceLineWords)
 
-                # Line Syllable Estimation
-                # Can only estimate syllable count per-word, so run the estimator on every word in
-                #   the Line and accumulate.  The estimator is really inaccurate but good for POC
-                sourceLineSyllables = 0
-                for sourceLineWord in sourceLineWords:
-                    sourceLineSyllables += syllables.estimate(sourceLineWord)
-                    self.debug['TotalSyllablesSeen'] += sourceLineSyllables
+                if ((len(firstWord) <= 34) and (len(lastWord) <= 34)):
 
-                # Assume both the first and last word are rhyme-able unless proven otherwise.
-                # If either are NOT rhyme-able, discard the line entirely.
-                rhymable = True
+                    # Line Syllable Estimation
+                    # Can only estimate syllable count per-word, so run the estimator on every word in
+                    #   the Line and accumulate.  The estimator is really inaccurate but good for POC
+                    sourceLineSyllables = 0
+                    for sourceLineWord in sourceLineWords:
+                        sourceLineSyllables += syllables.estimate(sourceLineWord)
+                        self.debug['TotalSyllablesSeen'] += sourceLineSyllables
 
-                # Look up rhymes for the firstWord and the lastWord
-                for rhymeTarget in [firstWord, lastWord]:
-                    # But only if we haven't encountered an unrhymable in this line AND haven't seen this word before
-                    if rhymable and rhymeTarget not in seenRhymeWords:
-                        # Record the fact that we've seen it now.
-                        seenRhymeWords.append(rhymeTarget)
-                        self.debug['NewSourceRhymeWords'] += 1
-                        try:
-                            # RhymeTypes:
-                            #   1 = same vowels and consonants of the same type regardless of voicing (HAWK, DOG)
-                            #   2 = same vowels and consonants as well as any extra consonants (DUDES, DUES)
-                            #   3 = same vowels and a subset of the same consonants (DUDE, DO)
-                            #   4 = same vowels and some of the same consonants,
-                            #       with some swapped for other consonants (FACTOR, FASTER)
-                            #   5 = same vowels and arbitrary consonants (CASH, CATS)
-                            #   6 = not the same vowels but the same consonants (CAT, BOT)
-                            # What comes back is a dictionary of syllable counts with
-                            #   corresponding lists of rhyme words.
-                            rhymeTargetRhymeList = self.rhyme.get_perfect_rhymes(lastWord).values()
+                    # Assume both the first and last word are rhyme-able unless proven otherwise.
+                    # If either are NOT rhyme-able, discard the line entirely.
+                    rhymable = True
 
-                            # The rhymeHint is the segment of the word from the leftmost vowel to the end
-                            #   This is a dumb chunky approach but just for fun..
-                            #   Might not be unique, might not be anything at all.  Just a hint.  Something to
-                            #   look at when browsing the pool.
-                            #   It's really only the rhymePool id that matters to me.
-                            rhymeHint = (re.findall(
-                                         "[aeiou]*[qwrtypsdfghjklzxcvbnm]*[aeiouy]+[qwrtypsdfghjklzxcvbnm]*$",
-                                         rhymeTarget) or ["Unknown"])[0]
-                            # Establish a new RhymePool for our words to chill out in
-                            rhymePoolId = self.rhymadexDB.query("INSERT INTO `tblRhymePools` \
-                                                                 (`rhymeHint`, `seedWord`) VALUES \
-                                                                 (?, ?)", (rhymeHint, rhymeTarget), "", True).lastrowid
-                            # rhymeTargetRhymeList is a list of lists, collapse to a single list of all the words
-                            rhymeTargetRhymeList = [item for sublist in rhymeTargetRhymeList for item in sublist]
-                            # Add the rhymeTarget to the rhymeTargetRhymeList too so it all gets added
-                            #   to the rhymePool together
-                            rhymeTargetRhymeList.append(rhymeTarget)
-                            for rhymeResult in rhymeTargetRhymeList:
-                                # Iterate through each rhymeResult
-                                # Record that we've seen it so we don't re-calculate rhymes on this again later
-                                seenRhymeWords.append(rhymeResult)
-                                # Strip out non-characters.  Some of the returned results have (1) and other crap
-                                rhymeResult = re.findall("[a-z]*", rhymeResult)[0]
-                                # Estimate syllables
-                                rhymeResultSyllables = syllables.estimate(rhymeResult)
-                                # And insert to our rhymeList
-                                self.rhymadexDB.query("INSERT INTO `tblRhymeWords` \
-                                                       (`word`, `syllables`, `rhymeType`, `rhymePool`) VALUES \
-                                                       (?, ?, 1, ?) \
-                                                       ON DUPLICATE KEY UPDATE `word` = ?",
-                                                       (rhymeResult, rhymeResultSyllables, rhymePoolId,
-                                                        rhymeResult), "", True)
-                                self.debug['DbInsertsRhymeWords'] += 1
+                    # Look up rhymes for the firstWord and the lastWord
+                    for rhymeTarget in [firstWord, lastWord]:
+                        # But only if:
+                        #   - we haven't encountered an unrhymable in this line so far,
+                        #   - AND haven't seen this word before
+                        if (rhymable) and (rhymeTarget not in seenRhymeWords):
+                            # Record the fact that we've seen it now.
+                            seenRhymeWords.append(rhymeTarget)
+                            self.debug['NewSourceRhymeWords'] += 1
+                            try:
+                                # RhymeTypes:
+                                #   1 = same vowels and consonants of the same type regardless of voicing (HAWK, DOG)
+                                #   2 = same vowels and consonants as well as any extra consonants (DUDES, DUES)
+                                #   3 = same vowels and a subset of the same consonants (DUDE, DO)
+                                #   4 = same vowels and some of the same consonants,
+                                #       with some swapped for other consonants (FACTOR, FASTER)
+                                #   5 = same vowels and arbitrary consonants (CASH, CATS)
+                                #   6 = not the same vowels but the same consonants (CAT, BOT)
+                                # What comes back is a dictionary of syllable counts with
+                                #   corresponding lists of rhyme words.
+                                rhymeTargetRhymeList = self.rhyme.get_perfect_rhymes(lastWord).values()
 
-                        except KeyError:
-                            # This word isn't rhymable, e.g.
-                            #   can't find any rhyming words in the dictionary for this word,
-                            #   so just discard this line entirely and move along.
-                            # set rhymable as False so we skip the db insert later
-                            self.debug['TotalUnrhymable'] += 1
-                            rhymable = False
+                                # The rhymeHint is the segment of the word from the leftmost vowel to the end
+                                #   This is a dumb chunky approach but just for fun..
+                                #   Might not be unique, might not be anything at all.  Just a hint.  Something to
+                                #   look at when browsing the pool.
+                                #   It's really only the rhymePool id that matters to me.
+                                rhymeHint = (re.findall(
+                                             "[aeiou]*[qwrtypsdfghjklzxcvbnm]*[aeiouy]+[qwrtypsdfghjklzxcvbnm]*$",
+                                             rhymeTarget) or ["Unknown"])[0]
+                                # Establish a new RhymePool for our words to chill out in
+                                rhymePoolId = self.rhymadexDB.query("INSERT INTO `tblRhymePools` \
+                                                                     (`rhymeHint`, `seedWord`) VALUES \
+                                                                     (?, ?)", (rhymeHint, rhymeTarget), "", True).lastrowid
+                                # rhymeTargetRhymeList is a list of lists, collapse to a single list of all the words
+                                rhymeTargetRhymeList = [item for sublist in rhymeTargetRhymeList for item in sublist]
+                                # Add the rhymeTarget to the rhymeTargetRhymeList too so it all gets added
+                                #   to the rhymePool together
+                                rhymeTargetRhymeList.append(rhymeTarget)
+                                for rhymeResult in rhymeTargetRhymeList:
+                                    # Iterate through each rhymeResult
+                                    # Record that we've seen it so we don't re-calculate rhymes on this again later
+                                    seenRhymeWords.append(rhymeResult)
+                                    # Strip out non-characters.  Some of the returned results have (1) and other crap
+                                    rhymeResult = re.findall("[a-z]*", rhymeResult)[0]
+                                    # Estimate syllables
+                                    rhymeResultSyllables = syllables.estimate(rhymeResult)
+                                    # And insert to our rhymeList
+                                    self.rhymadexDB.query("INSERT INTO `tblRhymeWords` \
+                                                           (`word`, `syllables`, `rhymeType`, `rhymePool`) VALUES \
+                                                           (?, ?, 1, ?) \
+                                                           ON DUPLICATE KEY UPDATE `word` = ?",
+                                                           (rhymeResult, rhymeResultSyllables, rhymePoolId,
+                                                            rhymeResult), "", True)
+                                    self.debug['DbInsertsRhymeWords'] += 1
+
+                            except KeyError:
+                                # This word isn't rhymable, e.g.
+                                #   can't find any rhyming words in the dictionary for this word,
+                                #   so just discard this line entirely and move along.
+                                # set rhymable as False so we skip the db insert later
+                                self.debug['TotalUnrhymable'] += 1
+                                rhymable = False
+                else:
+                    # firstWord or lastWord is over 34 chars long, probably some trash.  Forget it.
+                    self.debug['TotalUnrhymable'] += 1
+                    rhymable = False
 
                 # If everything came out rhymable, insert the line
                 if rhymable:
