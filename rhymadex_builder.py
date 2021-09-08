@@ -65,7 +65,7 @@ class rhymadexMariaDB:
 
     def query(self, query, queryParams=None, queryIdentifier="", commitNow=False):
         # My little query wrapper method.
-        # I want to wrap my queries with a db class method so I'm not directly using any particular DB's
+        # I want to wrap my queries with a db class method so I'm not using any particular DB's
         #   methods directly in my code.  This way I can more easily change DB technology later.
         # Query parameterization CAN NOT BE USED with identifiers like table names, field names, database names.
         #   Which is a monster headache.  Nobody seems to have a good answer.
@@ -115,7 +115,8 @@ class rhymadexMariaDB:
             # Create tblLines to hold lyric lines
             # Use a surrogate PRIMARY KEY `id`
             # lastWord is VARCHAR(34) ("Supercalifragilisticexpialidocious")
-            # line is VARCHAR(255), the longest lyric line we'll consider.  Make it unique
+            #   The largest English "word" I'd ever expect to encounter and store ..
+            # line is VARCHAR(255), the longest lyric line we'll consider.  Make it unique.
             self.query("CREATE TABLE `tblLines` \
                         (`id` INT NOT NULL AUTO_INCREMENT, \
                          `firstWord` VARCHAR(34) NOT NULL, \
@@ -132,11 +133,14 @@ class rhymadexMariaDB:
 
             print("INFO- Creating table tblRhymePools")
             # RhymePools provides a unique ID used to group RhymeWords in to "pools" of rhyme-ability
-            # `rhymeHint` contains the portion of a source word from the leftmost vowel onwards to the end
+            # `rhymeHint` contains a right-hand portion of the word:
+            #   (optional vowel(s), optional const(s), required vowel(s), optional const(s), EndOfWord)
             #   just kinda for fun and to see what the results look like
+            # `seedWord` is the first word encountered that generated this pool, also just for fun.
             self.query("CREATE TABLE `tblRhymePools` \
                         (`id` INT AUTO_INCREMENT NOT NULL, \
                          `rhymeHint` VARCHAR(34), \
+                         `seedWord` VARCHAR(34), \
                          PRIMARY KEY (`id`))")
 
             print("INFO- Creating table tblRhymeWords")
@@ -224,7 +228,7 @@ class rhymadex:
         line = "".join(re.findall(r"[a-z]+.*[a-z]+", line))
 
         # Remove almost all non-grammatical punctuation
-        line = re.sub(r"[~`#^*_\[\]{}|\\<>/]+", "", line)
+        line = re.sub(r"[~`#^*_\[\]{}|\\<>/()]+", "", line)
         line = re.sub(r"@", "at", line)
         line = re.sub(r"&", "and", line)
         line = re.sub(r"=", "equals", line)
@@ -263,9 +267,12 @@ class rhymadex:
         # Remove any existing source lines 'cause we're gunna rebuild them now
         deletedLines = self.rhymadexDB.query("DELETE FROM `tblLines` \
                                WHERE (`source`=?)", (sourceId,), "", True).rowcount
-        print("INFO- Deleted", deletedLines, "existing source lines before beginning this build")
+        if deletedLines:
+            print("INFO- Deleted", deletedLines, "existing source lines from DB before beginning this build.")
 
         # Break Lines apart on: , . ! ? ; : tabspace
+        #   IMO some of the most interesting magic happens on the comma split because it results in
+        #   poetic sentence fragments
         sourceLines = re.split('[,.!?;:\t]', sourceTextBlob)
 
         print("INFO- Deduplicating Line list ...")
@@ -342,12 +349,12 @@ class rhymadex:
                             #   look at when browsing the pool.
                             #   It's really only the rhymePool id that matters to me.
                             rhymeHint = (re.findall(
-                                         "[aeiou]*[qwrtypsdfghjklzxcvbnm]*[aeiou]+[qwrtypsdfghjklzxcvbnm]*$",
+                                         "[aeiou]*[qwrtypsdfghjklzxcvbnm]*[aeiouy]+[qwrtypsdfghjklzxcvbnm]*$",
                                          rhymeTarget) or ["Unknown"])[0]
                             # Establish a new RhymePool for our words to chill out in
                             rhymePoolId = self.rhymadexDB.query("INSERT INTO `tblRhymePools` \
-                                                                 (`rhymeHint`) VALUES \
-                                                                 (?)", (rhymeHint,), "", True).lastrowid
+                                                                 (`rhymeHint`, `seedWord`) VALUES \
+                                                                 (?, ?)", (rhymeHint, rhymeTarget), "", True).lastrowid
                             # rhymeTargetRhymeList is a list of lists, collapse to a single list of all the words
                             rhymeTargetRhymeList = [item for sublist in rhymeTargetRhymeList for item in sublist]
                             # Add the rhymeTarget to the rhymeTargetRhymeList too so it all gets added
