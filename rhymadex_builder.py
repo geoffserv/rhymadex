@@ -194,16 +194,20 @@ class rhymadex:
 
         self.rhyme = Phyme()
 
-        self.debugTotalLinesProcessed = 0  # Including garbage lines discarded during processing
-        self.debugTotalWordsProcessed = 0
-        self.debugTotalSyllablesSeen = 0  # Total count of every syllable of every word we've seen
-        self.debugTotalDiscardedLines = 0  # Discarded dupes, unrhymables, out of meter, etc.  All discarded lines
-        self.debugTotalUniqueLines = 0  # Unique lines we've seen
-        self.debugTotalUnrhymable = 0  # LastWords encountered which have no data in the rhyme dictionary
-        self.debugTotalOutOfMeter = 0  # Lines that don't match our desired meter
-        self.debugWontFitLines = 0 # Under 1 or over 256 char lines, won't fit in the DB
-        self.debugProcStartTime = 0  # Clocks for tracking execution time
-        self.debugProcEndTime = 0
+        self.debug = {}
+
+        self.debug['TotalLinesProcessed'] = 0  # Including garbage lines discarded during processing
+        self.debug['TotalWordsProcessed'] = 0
+        self.debug['TotalSyllablesSeen'] = 0  # Total count of every syllable of every word we've seen
+        self.debug['TotalDiscardedLines'] = 0  # Discarded dupes, unrhymables, out of meter, etc.  All discarded lines
+        self.debug['TotalUniqueLines'] = 0  # Unique lines we've seen
+        self.debug['TotalUnrhymable'] = 0  # LastWords encountered which have no data in the rhyme dictionary
+        self.debug['WontFitLines'] = 0 # Under 1 or over 256 char lines, won't fit in the DB
+        self.debug['ProcStartTime'] = 0  # Clocks for tracking execution time
+        self.debug['ProcEndTime'] = 0
+        self.debug['DbInsertsLines'] = 0 # Number of tblLines DB INSERTS
+        self.debug['DbInsertsRhymeWords'] = 0 # Number of tblRhymeWords DB INSERTS
+        self.debug['NewSourceRhymeWords'] = 0 # New source (from lines) rhyme words found on this run
 
     def lineCleaner(self, line):
         # Clean up a line of text before inserting it to the database
@@ -215,9 +219,9 @@ class rhymadex:
         # Only deal in lowers.
         line = line.lower()
 
-        # Starts with a letter, then whatever, then ends in a "word character" (including digits)
+        # Starts with a letter, then whatever, then ends in a letter
         # Truncates all non-letter junk at the start and end, including punctuation
-        line = "".join(re.findall(r"[a-z]+.*\w+", line))
+        line = "".join(re.findall(r"[a-z]+.*[a-z]+", line))
 
         # Remove almost all non-grammatical punctuation
         line = re.sub(r"[~`#^*_\[\]{}|\\<>/]+", "", line)
@@ -233,14 +237,15 @@ class rhymadex:
 
     def buildRhymadex(self, sourceFile):
 
-        self.debugProcStartTime = time.time()
+        self.debug['ProcStartTime'] = time.time()
 
         print("INFO- Opening file for processing:", sourceFile)
 
         try:
             # TODO could actually do some kind of sane and safe handling of file encoding
             sourceTextFile = open(sourceFile, 'r', encoding = "ISO-8859-1")
-            sourceTextBlob = sourceTextFile.read().replace('\n', ' ')
+            # sourceTextBlob = sourceTextFile.read().replace('\n', ' ')
+            sourceTextBlob = sourceTextFile.read()
             sourceTextFile.close()
         except OSError as e:
             print("ERROR- OSError when opening file for reading:", sourceFile)
@@ -260,58 +265,64 @@ class rhymadex:
                                WHERE (`source`=?)", (sourceId,), "", True).rowcount
         print("INFO- Deleted", deletedLines, "existing source lines before beginning this build")
 
-        # Break sentences apart on: , . ! ? ; : tabspace
-        sourceSentences = re.split('[,.!?;:\t]', sourceTextBlob)
+        # Break Lines apart on: , . ! ? ; : tabspace
+        sourceLines = re.split('[,.!?;:\t]', sourceTextBlob)
 
-        print("INFO- Deduplicating sentence list ...")
+        print("INFO- Deduplicating Line list ...")
         # Do that little to-dict and back to-list trick to dedupe all the list items
-        self.debugTotalLinesSeen = len(sourceSentences)
-        sourceSentences = list(dict.fromkeys(sourceSentences))
-        self.debugTotalDiscardedLines = self.debugTotalLinesSeen - len(sourceSentences)
+        self.debug['TotalLinesSeen'] = len(sourceLines)
+        sourceLines = list(dict.fromkeys(sourceLines))
+        self.debug['TotalDiscardedLines'] = self.debug['TotalLinesSeen'] - len(sourceLines)
 
         print("INFO- Building lyric dictionary ...")
-        print("INFO- Entries found:", len(sourceSentences))
+        print("INFO- Entries found:", len(sourceLines))
 
         # Keep track of which RhymeWords have been encountered during Rhymadex building
         #   so we don't do a ton of redundant lookups and database writes
         seenRhymeWords = [list(result) for result in
-                          self.rhymadexDB.query("SELECT `word` FROM `tblRhymeWords` ORDER BY `word`").fetchall()]
+                          self.rhymadexDB.query("SELECT `word` FROM `tblRhymeWords`").fetchall()]
         seenRhymeWords = [item for sublist in seenRhymeWords for item in sublist]
 
-        for sourceSentence in sourceSentences:
+        print("INFO- seenRhymeWords pulled from DB:", len(seenRhymeWords))
 
-            self.debugTotalLinesProcessed += 1
+        for sourceLine in sourceLines:
+
+            self.debug['TotalLinesProcessed'] += 1
 
             # Use the lineCleaner on each line first.
             # What comes back will be only printable ANSI with the ends trimmed, everything lowered,
             #   and some common punctuation-to-text replacements done
-            sourceSentence = self.lineCleaner(sourceSentence)
+            sourceLine = self.lineCleaner(sourceLine)
 
             # Anything longer than 255 won't fit in the DB with this schema.
             #   255's enough for anyone, anyway.  Right?  ... right?
-            if (sourceSentence and (len(sourceSentence) < 256)):
+            if (sourceLine and (len(sourceLine) < 256)):
 
-                sourceSentenceWords = sourceSentence.split()
-                firstWord = sourceSentenceWords[0]
-                lastWord = sourceSentenceWords[-1]
+                sourceLineWords = sourceLine.split()
+                firstWord = sourceLineWords[0]
+                lastWord = sourceLineWords[-1]
 
-                self.debugTotalWordsProcessed += len(sourceSentenceWords)
+                self.debug['TotalWordsProcessed'] += len(sourceLineWords)
 
-                # Sentence Syllable Estimation
+                # Line Syllable Estimation
                 # Can only estimate syllable count per-word, so run the estimator on every word in
-                #   the sentence and accumulate.  The estimator is really inaccurate but good for POC
-                sourceSentenceSyllables = 0
-                for sourceSentenceWord in sourceSentenceWords:
-                    sourceSentenceSyllables += syllables.estimate(sourceSentenceWord)
-                    self.debugTotalSyllablesSeen += sourceSentenceSyllables
+                #   the Line and accumulate.  The estimator is really inaccurate but good for POC
+                sourceLineSyllables = 0
+                for sourceLineWord in sourceLineWords:
+                    sourceLineSyllables += syllables.estimate(sourceLineWord)
+                    self.debug['TotalSyllablesSeen'] += sourceLineSyllables
+
+                # Assume both the first and last word are rhyme-able unless proven otherwise.
+                # If either are NOT rhyme-able, discard the line entirely.
+                rhymable = True
 
                 # Look up rhymes for the firstWord and the lastWord
                 for rhymeTarget in [firstWord, lastWord]:
-                    # But only if we haven't seen that word before
-                    if rhymeTarget not in seenRhymeWords:
+                    # But only if we haven't encountered an unrhymable in this line AND haven't seen this word before
+                    if rhymable and rhymeTarget not in seenRhymeWords:
                         # Record the fact that we've seen it now.
                         seenRhymeWords.append(rhymeTarget)
-
+                        self.debug['NewSourceRhymeWords'] += 1
                         try:
                             # RhymeTypes:
                             #   1 = same vowels and consonants of the same type regardless of voicing (HAWK, DOG)
@@ -324,77 +335,88 @@ class rhymadex:
                             # What comes back is a dictionary of syllable counts with
                             #   corresponding lists of rhyme words.
                             rhymeTargetRhymeList = self.rhyme.get_perfect_rhymes(lastWord).values()
-                            # The exception should catch lookup errors but just to be safe..
-                            if rhymeTargetRhymeList:
-                                # The rhymeHint is the segment of the word from the leftmost vowel to the end
-                                #   This is a dumb chunky approach but just for fun..
-                                #   Might not be unique, might not be anything at all.  Just a hint.  Something to
-                                #   look at when browsing the pool.
-                                #   It's really only the rhymePool id that matters to me.
-                                rhymeHint = (re.findall("[aeiou]+[qwrtypsdfghjklzxcvbnm]+$", rhymeTarget) \
-                                            or ["Unknown"])[0]
-                                # Establish a new RhymePool for our words to chill out in
-                                rhymePoolId = self.rhymadexDB.query("INSERT INTO `tblRhymePools` \
-                                                                     (`rhymeHint`) VALUES \
-                                                                     (?)", (rhymeHint,), "", True).lastrowid
-                                # rhymeTargetRhymeList is a list of lists, collapse to a single list of all the words
-                                rhymeTargetRhymeList = [item for sublist in rhymeTargetRhymeList for item in sublist]
-                                # Add the rhymeTarget to the rhymeTargetRhymeList too so it all gets added
-                                #   to the rhymePool together
-                                rhymeTargetRhymeList.append(rhymeTarget)
-                                for rhymeResult in rhymeTargetRhymeList:
-                                    # Iterate through each rhymeResult
-                                    # Record that we've seen it so we don't re-calculate rhymes on this again later
-                                    seenRhymeWords.append(rhymeResult)
-                                    # Strip out non-characters.  Some of the returned results have (1) and other crap
-                                    rhymeResult = re.findall("[a-z]*", rhymeResult)[0]
-                                    # Estimate syllables
-                                    rhymeResultSyllables = syllables.estimate(rhymeResult)
-                                    # And insert to our rhymeList
-                                    self.rhymadexDB.query("INSERT INTO `tblRhymeWords` \
-                                                           (`word`, `syllables`, `rhymeType`, `rhymePool`) VALUES \
-                                                           (?, ?, 1, ?) \
-                                                           ON DUPLICATE KEY UPDATE `word` = ?",
-                                                           (rhymeResult, rhymeResultSyllables, rhymePoolId,
-                                                            rhymeResult), "", True)
+
+                            # The rhymeHint is the segment of the word from the leftmost vowel to the end
+                            #   This is a dumb chunky approach but just for fun..
+                            #   Might not be unique, might not be anything at all.  Just a hint.  Something to
+                            #   look at when browsing the pool.
+                            #   It's really only the rhymePool id that matters to me.
+                            rhymeHint = (re.findall(
+                                         "[aeiou]*[qwrtypsdfghjklzxcvbnm]*[aeiou]+[qwrtypsdfghjklzxcvbnm]*$",
+                                         rhymeTarget) or ["Unknown"])[0]
+                            # Establish a new RhymePool for our words to chill out in
+                            rhymePoolId = self.rhymadexDB.query("INSERT INTO `tblRhymePools` \
+                                                                 (`rhymeHint`) VALUES \
+                                                                 (?)", (rhymeHint,), "", True).lastrowid
+                            # rhymeTargetRhymeList is a list of lists, collapse to a single list of all the words
+                            rhymeTargetRhymeList = [item for sublist in rhymeTargetRhymeList for item in sublist]
+                            # Add the rhymeTarget to the rhymeTargetRhymeList too so it all gets added
+                            #   to the rhymePool together
+                            rhymeTargetRhymeList.append(rhymeTarget)
+                            for rhymeResult in rhymeTargetRhymeList:
+                                # Iterate through each rhymeResult
+                                # Record that we've seen it so we don't re-calculate rhymes on this again later
+                                seenRhymeWords.append(rhymeResult)
+                                # Strip out non-characters.  Some of the returned results have (1) and other crap
+                                rhymeResult = re.findall("[a-z]*", rhymeResult)[0]
+                                # Estimate syllables
+                                rhymeResultSyllables = syllables.estimate(rhymeResult)
+                                # And insert to our rhymeList
+                                self.rhymadexDB.query("INSERT INTO `tblRhymeWords` \
+                                                       (`word`, `syllables`, `rhymeType`, `rhymePool`) VALUES \
+                                                       (?, ?, 1, ?) \
+                                                       ON DUPLICATE KEY UPDATE `word` = ?",
+                                                       (rhymeResult, rhymeResultSyllables, rhymePoolId,
+                                                        rhymeResult), "", True)
+                                self.debug['DbInsertsRhymeWords'] += 1
 
                         except KeyError:
-                            # Can't find any rhyming words in the dictionary,
-                            #   so just discard this entirely and move along
-                            self.debugTotalUnrhymable += 1
-                            self.debugTotalDiscardedLines += 1
-                            continue  # Move along.  Nothing to see here.
+                            # This word isn't rhymable, e.g.
+                            #   can't find any rhyming words in the dictionary for this word,
+                            #   so just discard this line entirely and move along.
+                            # set rhymable as False so we skip the db insert later
+                            self.debug['TotalUnrhymable'] += 1
+                            rhymable = False
 
-                # Insert lyrics, rhymes and syllables here
-                self.rhymadexDB.query("INSERT INTO `tblLines` \
-                                      (`firstWord`, `lastWord`, `line`, `syllables`, `source`) \
-                                      VALUES (?, ?, ?, ?, ?) \
-                                      ON DUPLICATE KEY UPDATE `line` = ?",
-                                      (firstWord, lastWord, sourceSentence, int(sourceSentenceSyllables),
-                                       int(sourceId), sourceSentence), "", True)
-                self.debugTotalUniqueLines += 1
+                # If everything came out rhymable, insert the line
+                if rhymable:
+                    self.rhymadexDB.query("INSERT INTO `tblLines` \
+                                          (`firstWord`, `lastWord`, `line`, `syllables`, `source`) \
+                                          VALUES (?, ?, ?, ?, ?) \
+                                          ON DUPLICATE KEY UPDATE `line` = ?",
+                                          (firstWord, lastWord, sourceLine, int(sourceLineSyllables),
+                                           int(sourceId), sourceLine), "", True)
+                    self.debug['TotalUniqueLines'] += 1
+                    self.debug['DbInsertsLines'] += 1
+                else:
+                    self.debug['TotalDiscardedLines'] += 1
 
-                if ((self.debugTotalUniqueLines == 1) or (self.debugTotalUniqueLines % 10000) == 0):
-                    print("")
-                    print("INFO- Processed: ", end="")
-                if ((self.debugTotalUniqueLines == 1) or self.debugTotalUniqueLines % 1000 == 0):
-                    print(self.debugTotalUniqueLines, ".. ", end="")
+                if ((self.debug['TotalLinesProcessed'] == 1) or self.debug['TotalLinesProcessed'] % 1000 == 0):
+                    percentComplete = int((int(self.debug['TotalLinesProcessed'])/int(len(sourceLines))) * 100)
+                    print("\r", end="")
+                    print("INFO- Estimated build progress:", percentComplete, "%", end="")
             else:
-                self.debugWontFitLines += 1
-                self.debugTotalDiscardedLines += 1
+                self.debug['WontFitLines'] += 1
+                self.debug['TotalDiscardedLines'] += 1
 
-        print("Done.")
-        self.debugProcEndTime = time.time()
+        print(" ... Done.")
+        self.debug['ProcEndTime'] = time.time()
 
-        print("INFO- Completed building lyric dictionary in", self.debugProcEndTime - self.debugProcStartTime, "seconds")
-        print("INFO- Total Lines Processed:", self.debugTotalLinesProcessed)
-        print("INFO- Total Words Processed:", self.debugTotalWordsProcessed)
-        print("INFO- Total Syllables seen:", self.debugTotalSyllablesSeen)
-        print("INFO- Total Discarded lines:", self.debugTotalDiscardedLines)
-        print("INFO- Total Un-Rhymable words:", self.debugTotalUnrhymable)
-        print("INFO- Total Out-Of-Meter lines:", self.debugTotalOutOfMeter)
-        print("INFO- Total Won't-Fit-in-DB lines:", self.debugWontFitLines)
-        print("INFO- Total Unique lyric lines available:", self.debugTotalUniqueLines)
+        # Because I'm depending on DUPLICATE KEY UPDATE logic, on a re-run we'll still see some
+        #   DB Inserts reported.  They're DUPLICATE and the row counts should still be identical
+        #   before and after re-runs.
+        print("INFO- Completed building lyric dictionary in",
+              self.debug['ProcEndTime'] - self.debug['ProcStartTime'], "seconds")
+        print("INFO- Total Lines Processed:", self.debug['TotalLinesProcessed'])
+        print("INFO- Total Words Processed:", self.debug['TotalWordsProcessed'])
+        print("INFO- Total Syllables seen:", self.debug['TotalSyllablesSeen'])
+        print("INFO- Total Discarded lines:", self.debug['TotalDiscardedLines'])
+        print("INFO- Total Un-Rhymable words:", self.debug['TotalUnrhymable'])
+        print("INFO- Total Won't-Fit-in-DB lines:", self.debug['WontFitLines'])
+        print("INFO- Total Unique lyric lines available:", self.debug['TotalUniqueLines'])
+        print("INFO- DB tblLines INSERTS:", self.debug['DbInsertsLines'])
+        print("INFO- DB tblRhymeWords INSERTS:", self.debug['DbInsertsRhymeWords'])
+        print("INFO- seenRhymeWords post-processing:", len(seenRhymeWords))
         print("INFO- Lyric Dictionary is ready!")
 
 if __name__ == "__main__":
