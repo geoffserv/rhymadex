@@ -228,10 +228,19 @@ class rhymadex:
         line = "".join(re.findall(r"[a-z]+.*[a-z]+", line))
 
         # Remove almost all non-grammatical punctuation
-        line = re.sub(r"[~`#^*_\[\]{}|\\<>/()]+", "", line)
+        line = re.sub(r"[~`#^*_\[\]{}|\\<>/()$€ƒ„…†‡ˆ‰‹Œ‘’“”•˜™›¢£¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¿×÷]+", "", line)
+
+        # Pretty up with some substitutions
+        line = re.sub(r"--", " ", line)
+        line = re.sub(r"–", " ", line)
+        line = re.sub(r"—", " ", line)
         line = re.sub(r"@", "at", line)
         line = re.sub(r"&", "and", line)
         line = re.sub(r"=", "equals", line)
+        line = re.sub(r"%", "percent", line)
+        line = re.sub(r"¼", "one quarter", line)
+        line = re.sub(r"½", "one half", line)
+        line = re.sub(r"¾", "three quarters", line)
         line = re.sub(r"\+", "plus", line)
 
         if line:
