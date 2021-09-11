@@ -12,11 +12,34 @@ import syllables
 import time
 import string
 
+class debugger:
+    def __init__(self):
+        self.stats = {}
+        self.messages = []
+
+    def logStat(self, statistic, increment, value=None):
+        if not statistic in self.debug:
+            self.stats[statistic] = int(increment) or int(value)
+        else:
+            self.stats[statistic] += int(increment)
+
+    def getStat(self, statistic):
+        if not statistic in self.stats:
+            return 0
+        else:
+            return int(self.stats[statistic])
+
+    def message(self, severity, message, timestamp=time.time()):
+        messageString = "{}- {}".format(severity, message)
+        self.messages.append({"message": messageString, "timestamp": timestamp})
+        print(messageString)
+
+    def summary(self):
+        for stat in self.stats:
+            self.message("DEBUG SUMMARY", "{}: {}".format(stat, self.stats[stat]))
+
 class rhymadexMariaDB:
-    def __init__(self, configfile):
-        # Using configparser to read configfile for database credentials
-        # Can refactor later to use env or flask or whatever.
-        # __init__ get database credentials and connect
+    def __init__(self, debugger, configfile="mariadb.cfg"):
 
         # By default this expects mariadb.cfg in the same directory as this script
         # In the format:
@@ -35,6 +58,8 @@ class rhymadexMariaDB:
         #   I add changes, features, and whatnot
         self.schemaCurrentVersion = 1
 
+        self.debugger = debugger
+
         if dbConfig.read(configfile):
             try:
                 self.username = dbConfig['mariadb']['username']
@@ -43,14 +68,16 @@ class rhymadexMariaDB:
                 self.database = dbConfig['mariadb']['database']
                 self.port = dbConfig['mariadb']['port']
             except configparser.Error as e:
-                print("ERROR- Configparser error:", e)
+                debugger.message("ERROR", "Configparser error: {}".format(e))
                 sys.exit("Could not find database credential attributes in configfile.  Exiting.")
         else:
             sys.exit("Could not open configfile to read database credentials.  Exiting.")
 
         try:
             # Connect but don't open a database yet
-            print("INFO- Connecting to database server:", self.host, "port", self.port, "as", self.username)
+            debugger.message("INFO",
+                             "Connecting to MariaDB server: {} port {} as {}".format(self.host,
+                                                                                     self.port, self.username))
             self.connection = mariadb.connect(
                 user=self.username,
                 password=self.password,
@@ -58,7 +85,7 @@ class rhymadexMariaDB:
                 port=int(self.port)
             )
         except mariadb.Error as e:
-            print("ERROR- MariaDB connection error: ", e)
+            debugger.message("ERROR", "MariaDB Connection error: {}".format(e))
             sys.exit("Database connection error.  Exiting.")
 
         self.cursor = self.connection.cursor()
@@ -87,22 +114,19 @@ class rhymadexMariaDB:
             return self.cursor
         except mariadb.Error as e:
             # Stop immediately on an error
-            print("MariaDB query error: ", e)
-            print("  While executing query:", query)
-            print("  With paramaters:", queryParams)
+            debugger.message("ERROR", "MariaDB error: {}\n Query: {}\n Parameters: {}".format(e, query, queryParams))
             sys.exit("Database query error.  Exiting.")
 
     def initSchema(self):
         # Check if the target database already exists
-        print("INFO- Checking for database", self.database)
+        debugger.message("INFO", "Checking for database {}".format(self.database))
         if not self.query("SHOW DATABASES LIKE '{}'", None, self.database).fetchall():
 
             # Did not find the database, so create it
-            print("INFO- Database not found.  Creating.")
+            debugger.message("INFO", "Database not found.  Creating.")
             self.query("CREATE DATABASE `{}`", None, self.database)
             self.query("USE `{}`", None, self.database)
 
-            print("INFO- Creating table tblSources")
             # tblSources holds info about each text data source
             self.query("CREATE TABLE `tblSources` \
                         (`id` INT AUTO_INCREMENT NOT NULL, \
@@ -111,7 +135,6 @@ class rhymadexMariaDB:
                          UNIQUE KEY (`sourceName`), \
                          PRIMARY KEY (`id`))")
 
-            print("INFO- Creating table tblLines")
             # Create tblLines to hold lyric lines
             # Use a surrogate PRIMARY KEY `id`
             # lastWord is VARCHAR(34) ("Supercalifragilisticexpialidocious")
@@ -131,7 +154,6 @@ class rhymadexMariaDB:
                          ON DELETE CASCADE \
                          ON UPDATE RESTRICT)")
 
-            print("INFO- Creating table tblRhymePools")
             # RhymePools provides a unique ID used to group RhymeWords in to "pools" of rhyme-ability
             # `rhymeHint` contains a right-hand portion of the word:
             #   (optional vowel(s), optional const(s), required vowel(s), optional const(s), EndOfWord)
@@ -143,7 +165,6 @@ class rhymadexMariaDB:
                          `seedWord` VARCHAR(34), \
                          PRIMARY KEY (`id`))")
 
-            print("INFO- Creating table tblRhymeWords")
             # RhymeWords stores each unique word+rhymeType and links to a rhymePool
             # My idea is that words are part of pools wherein all words in a pool rhyme with each-other
             # I have no proof that the idea proves always true but it will be a good starting point.
@@ -158,7 +179,6 @@ class rhymadexMariaDB:
                          CONSTRAINT `fk_rhyme_pool` FOREIGN KEY (`rhymePool`) REFERENCES `tblRhymePools` (`id`) \
                          ON UPDATE RESTRICT)")
 
-            print("INFO- Creating table tblVersion")
             # tblVersions stores the version of the overall database schema
             # If we've made it this far, ostensibly the database schema is set up and ready to go
             #   I'm so optimistic that I'll use a MEDIUMINT
@@ -176,42 +196,37 @@ class rhymadexMariaDB:
 
         else:
             # The database exists.  Open it
-            print("INFO- Database found.  Opening.")
+            debugger.message("INFO", "Database found.  Opening.")
             self.query("USE `{}`", None, self.database)
 
             # Check most recent schema version
             currentVersion = self.query("SELECT max(`versionNum`) AS `versionNum`, \
                                          `dtmInit` FROM `tblVersion`").fetchall()[0]
-            print("INFO- Found rhymadex version", currentVersion[0], "created", currentVersion[1])
+            debugger.message("INFO", "Found rhymadex version {} created {}".format(currentVersion[0],
+                                                                                   currentVersion[1]))
 
             if not int(currentVersion[0]) == int(self.schemaCurrentVersion):
-                print("ERROR- Database schema version doesn't match expected version:", self.schemaCurrentVersion)
+                debugger.message("ERROR",
+                                 "Schema version doesn't match expected version: {}".format(self.schemaCurrentVersion))
                 exit("Won't continue with mismatching schema.  Exiting.")
             # At this point, found the database, the schema version table, and the reported schema
             #   version matches what I'm looking for.  Assuming now that everything in the database is
             #   where I expect and how I expect it.  If not.. well.. welcome to crash town.
 
-class rhymadex:
-    def __init__(self, rhymadexDB):
-        print("INFO- Initializing Rhymadex")
+class rhymer:
+    def __init__(self, rhymadexDB, debugger):
+        debugger.message("INFO", "Initializing Rhymer")
         self.rhymadexDB = rhymadexDB
-
+        self.debugger = debugger # Just to be able to push back debug counters, for now
         self.rhyme = Phyme()
 
-        self.debug = {}
+class rhymadex:
+    def __init__(self, rhymadexDB):
+        self.debugger = debugger()
+        self.rhymadexDB = rhymadexMariaDB(self.debugger)
+        self.rhymer = rhymer(rhymadexDB, self.debugger)
 
-        self.debug['TotalLinesProcessed'] = 0  # Including garbage lines discarded during processing
-        self.debug['TotalWordsProcessed'] = 0
-        self.debug['TotalSyllablesSeen'] = 0  # Total count of every syllable of every word we've seen
-        self.debug['TotalDiscardedLines'] = 0  # Discarded dupes, unrhymables, out of meter, etc.  All discarded lines
-        self.debug['TotalUniqueLines'] = 0  # Unique lines we've seen
-        self.debug['TotalUnrhymable'] = 0  # LastWords encountered which have no data in the rhyme dictionary
-        self.debug['WontFitLines'] = 0 # Under 1 or over 256 char lines, won't fit in the DB
-        self.debug['ProcStartTime'] = 0  # Clocks for tracking execution time
-        self.debug['ProcEndTime'] = 0
-        self.debug['DbInsertsLines'] = 0 # Number of tblLines DB INSERTS
-        self.debug['DbInsertsRhymeWords'] = 0 # Number of tblRhymeWords DB INSERTS
-        self.debug['NewSourceRhymeWords'] = 0 # New source (from lines) rhyme words found on this run
+        self.rhymadexDB.initSchema()
 
     def lineCleaner(self, line):
         # Clean up a line of text before inserting it to the database
@@ -243,67 +258,69 @@ class rhymadex:
         line = re.sub(r"¾", "three quarters", line)
         line = re.sub(r"\+", "plus", line)
 
-        if line:
-            return line
-        else:
-            return None
+        return line or None
 
     def buildRhymadex(self, sourceFile):
 
-        self.debug['ProcStartTime'] = time.time()
-
-        print("INFO- Opening file for processing:", sourceFile)
+        self.debugger("INFO", "Opening file for processing: {}".format(sourceFile))
 
         try:
-            # TODO could actually do some kind of sane and safe handling of file encoding
             sourceTextFile = open(sourceFile, 'r', encoding = "ISO-8859-1")
             # sourceTextBlob = sourceTextFile.read().replace('\n', ' ')
             sourceTextBlob = sourceTextFile.read()
             sourceTextFile.close()
         except OSError as e:
-            print("ERROR- OSError when opening file for reading:", sourceFile)
-            print("ERROR- OSError:", e)
+            self.debugger("ERROR", "OSError when opening file for reading: {}\nOSError: {}".format(sourceFile, e))
             exit("Nothing more to do.  Exiting.")
 
         # Capture the data source and get the source primary key ID from the database
-        sourceId = self.rhymadexDB.query("INSERT INTO `tblSources` \
+        self.rhymadexDB.query("INSERT INTO `tblSources` \
                               (`sourceName`, `dtmInit`) \
                               VALUES \
                               (?, now()) \
                               ON DUPLICATE KEY UPDATE \
-                              `dtmInit`=now()", (sourceFile,), "", True).lastrowid
+                              `dtmInit` = now()", (sourceFile,), "", True)
+
+        # Re-query to capture the sourceId.  Could potentially do it all-at-once above, but the DUPLICATE KEY UPDATE
+        #   makes the behavior less clear and less easy for me to understand.  I think this is more clear and not too
+        #   expensive.
+        sourceId = self.rhymadexDB.query("SELECT `id` FROM `tblSources` \
+                                          WHERE \
+                                          (`sourceName` = ?) \
+                                          LIMIT 1", (sourceFile,)).fetchall()[0]
 
         # Remove any existing source lines 'cause we're gunna rebuild them now
         deletedLines = self.rhymadexDB.query("DELETE FROM `tblLines` \
-                               WHERE (`source`=?)", (sourceId,), "", True).rowcount
+                                              WHERE (`source` = ?)", (sourceId,), "", True).rowcount
         if deletedLines:
-            print("INFO- Deleted", deletedLines, "existing source lines from DB before beginning this build.")
+            debugger.message("INFO", "Deleted {} existing source lines from tblLines.".format(deletedLines))
 
-        # Break Lines apart on: , . ! ? ; : tabspace
+        # Break Lines apart on: , . ! ? ; : tabspace newline
         #   IMO some of the most interesting magic happens on the comma split because it results in
         #   poetic sentence fragments
         sourceLines = re.split('[,.!?;:\t\n]', sourceTextBlob)
 
-        print("INFO- Deduplicating Line list ...")
+        self.debugger.message("INFO", "Deduplicating line list ...")
         # Do that little to-dict and back to-list trick to dedupe all the list items
-        self.debug['TotalLinesSeen'] = len(sourceLines)
+        self.debugger.logStat("TotalLinesSeen", None, len(sourceLines))
         sourceLines = list(dict.fromkeys(sourceLines))
-        self.debug['TotalDiscardedLines'] = self.debug['TotalLinesSeen'] - len(sourceLines)
+        self.debugger.logStat("TotalDiscardedLines", debugger.getStat("TotalLinesSeen") - len(sourceLines))
 
-        print("INFO- Building lyric dictionary ...")
-        print("INFO- Entries found:", len(sourceLines))
+        self.debugger.message("INFO", "Line entries found: {}".format(debugger.getStat("TotalLinesSeen")))
 
         # Keep track of which RhymeWords have been encountered during Rhymadex building
         #   so we don't do a ton of redundant lookups and database writes
         seenRhymeWords = [list(result) for result in
                           self.rhymadexDB.query("SELECT `word` FROM `tblRhymeWords`").fetchall()]
         seenRhymeWords = [item for sublist in seenRhymeWords for item in sublist]
+        self.debugger.logStat("SeenRhymeWords", len(seenRhymeWords))
+        self.debugger.message("INFO", "seenRhymeWords pulled from DB: {}".format(debugger.getStat("SeenRhymeWords")))
 
-        print("INFO- seenRhymeWords pulled from DB:", len(seenRhymeWords))
+        # TODO refactor work starting from here
 
         for sourceLine in sourceLines:
 
-            self.debug['TotalLinesProcessed'] += 1
+            self.debugger.logStat("TotalLinesProcessed", 1)
 
             # Use the lineCleaner on each line first.
             # What comes back will be only printable ANSI with the ends trimmed, everything lowered,
@@ -311,14 +328,13 @@ class rhymadex:
             sourceLine = self.lineCleaner(sourceLine)
 
             # Anything longer than 255 won't fit in the DB with this schema.
-            #   255's enough for anyone, anyway.  Right?  ... right?
             if (sourceLine and (len(sourceLine) < 256)):
 
                 sourceLineWords = sourceLine.split()
                 firstWord = sourceLineWords[0]
                 lastWord = sourceLineWords[-1]
 
-                self.debug['TotalWordsProcessed'] += len(sourceLineWords)
+                self.debugger.logStat("TotalWordsProcessed", len(sourceLineWords))
 
                 if ((len(firstWord) <= 34) and (len(lastWord) <= 34)):
 
@@ -426,25 +442,9 @@ class rhymadex:
         print(" ... Done.")
         self.debug['ProcEndTime'] = time.time()
 
-        # Because I'm depending on DUPLICATE KEY UPDATE logic, on a re-run we'll still see some
-        #   DB Inserts reported.  They're DUPLICATE and the row counts should still be identical
-        #   before and after re-runs.
-        print("INFO- Completed building lyric dictionary in",
-              self.debug['ProcEndTime'] - self.debug['ProcStartTime'], "seconds")
-        print("INFO- Total Lines Processed:", self.debug['TotalLinesProcessed'])
-        print("INFO- Total Words Processed:", self.debug['TotalWordsProcessed'])
-        print("INFO- Total Syllables seen:", self.debug['TotalSyllablesSeen'])
-        print("INFO- Total Discarded lines:", self.debug['TotalDiscardedLines'])
-        print("INFO- Total Un-Rhymable words:", self.debug['TotalUnrhymable'])
-        print("INFO- Total Won't-Fit-in-DB lines:", self.debug['WontFitLines'])
-        print("INFO- Total Unique lyric lines available:", self.debug['TotalUniqueLines'])
-        print("INFO- DB tblLines INSERTS:", self.debug['DbInsertsLines'])
-        print("INFO- DB tblRhymeWords INSERTS:", self.debug['DbInsertsRhymeWords'])
-        print("INFO- seenRhymeWords post-processing:", len(seenRhymeWords))
-        print("INFO- Lyric Dictionary is ready!")
+
 
 if __name__ == "__main__":
-    rhymadexDB = rhymadexMariaDB('mariadb.cfg')
-    rhymadexDB.initSchema()
+
     rhymadex = rhymadex(rhymadexDB)
     rhymadex.buildRhymadex("textsources/bible/bible.txt")
