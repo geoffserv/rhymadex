@@ -25,13 +25,30 @@ if __name__ == "__main__":
     #                                         FirstWord                       FullLine    LastWord
     #                                         RG    SC    Exl   Inc     BR    SC    BR    RG   SC    Exl   Inc   BR
     # If I should stay                     [ [None, 1,    None, ["if"], None, 4,    None, "A", 1,    None, None, None],
+    #                                        1 syllable first word, (but overridden by) first word include group "if",
+    #                                          4 syllable overall line, last word rhyme group A, 1 syllable last word,
+    #
     # I would only be in your way            ["Q",  None, None, None,   None, 8,    None, "A", None, None, None, None],
+    #                                        First word rhyme group Q, 8 syllable overall line,
+    #                                          Last word rhyme group A
+    #
     # So Ill go,                             [None, None, None, None,   None, 3,    None, "B", None, None, None, None],
+    #                                        3 syllable overall line, last word rhyme group B
+    #
     # but I know                             [None, None, None, None,   None, 3,    None, "B", None, None, None, None],
+    #                                        3 syllable overall line, last word rhyme group B
+    #
     # Ill think of you each step of the way  ["Q",  None, None, None,   None, 9,    None, "A", None, None, None, 1   ],
+    #                                        First word rhyme group Q, 9 syllable overall line,
+    #                                        Last word rhyme group A, (but overridden by) last word backreference to
+    #                                        line index [1] "way"
     #
     # I will always love you                 [None, None, None, None,   1,    6,    None, "C", None, None, None, None],
+    #                                        First word backreference to line index [1] "you",
+    #                                        6 syallable overall line, last word rhyme group C
+    #
     # I will always love you                 [None, None, None, None,   None, None, 5,   None, None, None, None, None],
+    #                                        Full line backreference to line [5] "I will always love you"
     #
     # Bittersweet memories                   [None, 3,    None, None,   None, 6,    None, "D", None, None, None, None],
     # That's all Im taking with me           [None, None, None, None,   None, 7,    None, "D", None, None, None, None],
