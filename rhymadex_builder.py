@@ -51,7 +51,6 @@ class debugger:
 
 class rhymadexMariaDB:
     def __init__(self, debugger, configfile="mariadb.cfg"):
-
         # By default this expects mariadb.cfg in the same directory as this script
         # In the format:
         #
@@ -143,6 +142,8 @@ class rhymadexMariaDB:
             self.debugger.message("INFO", "Database not found.  Creating.")
             self.query("CREATE DATABASE `{}`", None, self.database)
             self.query("USE `{}`", None, self.database)
+
+            # rhymadex DB schema v1
 
             # tblSources holds info about each text data source
             self.query("CREATE TABLE `tblSources` \
@@ -309,7 +310,6 @@ class rhymer:
                             # Check that each cleaned result from Phyme hasn't been seen yet, and
                             # record that we've seen it so we don't re-calculate rhymes on this again later
                             self.seenRhymeWords.append(rhymeResult)
-                            self.debugger.logStat("NewSourceRhymeWords", 1)
 
                             # Estimate syllables
                             rhymeResultSyllables = syllables.estimate(rhymeResult)
@@ -366,6 +366,14 @@ class rhymadex:
 
         # Remove almost all non-grammatical punctuation
         line = re.sub(r"[~`#^*_\[\]{}|\\<>/()$€ƒ„…†‡ˆ‰‹Œ‘’“”•˜™›¢£¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¿×÷]+", "", line)
+
+        # The "and" coordinating conjunction at the beginning of a line is redundant in my opinion,
+        #   resulting from the comma-split logic.  There are an enormous amount of lines with "and"
+        #   as the first word.  Lets just remove them to make for more intesting output.  Some day,
+        #   if this is calculating every rhymepool for every word in a line, could make "and" optional.
+        #   Other coordinating conjunctions like but, for, or, nor etc imply "non-additive" logic.
+        #   Leave those in for now.
+        line = re.sub(r"^and ", "", line)
 
         # Pretty up with some substitutions
         line = re.sub(r"--", " ", line)
