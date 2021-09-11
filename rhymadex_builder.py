@@ -280,9 +280,6 @@ class rhymer:
                     # rhymeTargetRhymeList is a list of lists, collapse to a single list of all the words
                     rhymeTargetRhymeList = [result for list in rhymeTargetRhymeList for result in list]
 
-                    # Some rhyme matches came back, so record this as a rhymable word
-                    self.seenRhymeWords.append(rhymeTarget)
-                    self.debugger.logStat("NewSourceRhymeWords", 1)
                     # And append it to the rhymeTargetRhymeList so it, itself, is added to the rhyme pool with all
                     #   of its friends and will be excluded automatically in the next run as well.
                     rhymeTargetRhymeList.append(rhymeTarget)
@@ -304,20 +301,26 @@ class rhymer:
 
                     for rhymeResult in rhymeTargetRhymeList:
                         # Iterate through each rhymeResult
-                        # Record that we've seen it so we don't re-calculate rhymes on this again later
-                        self.seenRhymeWords.append(rhymeResult)
+
                         # Strip out non-characters.  Some of the returned results from Phyme have (1) and other crap
                         rhymeResult = re.findall("[a-z]*", rhymeResult.lower())[0]
-                        # Estimate syllables
-                        rhymeResultSyllables = syllables.estimate(rhymeResult)
-                        # And insert to our rhymeList
-                        self.rhymadexDB.query("INSERT INTO `tblRhymeWords` \
-                                               (`word`, `syllables`, `rhymeType`, `rhymePool`) VALUES \
-                                               (?, ?, 1, ?) \
-                                               ON DUPLICATE KEY UPDATE `word` = ?",
-                                              (rhymeResult, rhymeResultSyllables, rhymePoolId,
-                                               rhymeResult), "", True)
-                        self.debugger.logStat("DbInsertsRhymeWords", 1)
+
+                        if (rhymeResult and rhymeResult not in self.seenRhymeWords):
+                            # Check that each cleaned result from Phyme hasn't been seen yet, and
+                            # record that we've seen it so we don't re-calculate rhymes on this again later
+                            self.seenRhymeWords.append(rhymeResult)
+                            self.debugger.logStat("NewSourceRhymeWords", 1)
+
+                            # Estimate syllables
+                            rhymeResultSyllables = syllables.estimate(rhymeResult)
+                            # And insert to our rhymeList
+                            self.rhymadexDB.query("INSERT INTO `tblRhymeWords` \
+                                                   (`word`, `syllables`, `rhymeType`, `rhymePool`) VALUES \
+                                                   (?, ?, 1, ?) \
+                                                   ON DUPLICATE KEY UPDATE `word` = ?",
+                                                  (rhymeResult, rhymeResultSyllables, rhymePoolId,
+                                                   rhymeResult), "", True)
+                            self.debugger.logStat("DbInsertsRhymeWords", 1)
 
                     # It was rhymable, it's been recorded along with its friends.  It's good to go.
                     return True
