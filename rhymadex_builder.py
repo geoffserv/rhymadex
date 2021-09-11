@@ -31,14 +31,23 @@ class debugger:
         else:
             return int(self.stats[statistic])
 
-    def message(self, severity, message, timestamp=time.time()):
+    def message(self, severity, message):
         messageString = "{}- {}".format(severity, message)
-        self.messages.append({"message": messageString, "timestamp": timestamp})
+        self.messages.append({"message": messageString, "timestamp": time.time()})
         print(messageString)
 
     def summary(self):
         for stat in self.stats:
             self.message("DEBUG SUMMARY", "{}: {}".format(stat, self.stats[stat]))
+        print("Total Runtime:", self.messages[-1]["timestamp"] - self.messages[0]["timestamp"], "seconds")
+
+    def progress(self, processed, total):
+        if ((processed == 1) or (processed % 1000 == 0)):
+            percentComplete = int((processed/total)*100)
+            print("\r", end="")
+            print("PROGRESS- Estimated build progress:", percentComplete, "%", end="")
+        if (processed == total):
+            print(" ... Done.")
 
 class rhymadexMariaDB:
     def __init__(self, debugger, configfile="mariadb.cfg"):
@@ -268,11 +277,16 @@ class rhymer:
                     #   corresponding lists of rhyme words.
                     rhymeTargetRhymeList = self.rhyme.get_perfect_rhymes(rhymeTarget).values() # Type 1 rhymes
                     # KeyError exception will come up if this is empty, caught below.
-    
+                    # rhymeTargetRhymeList is a list of lists, collapse to a single list of all the words
+                    rhymeTargetRhymeList = [result for list in rhymeTargetRhymeList for result in list]
+
                     # Some rhyme matches came back, so record this as a rhymable word
                     self.seenRhymeWords.append(rhymeTarget)
                     self.debugger.logStat("NewSourceRhymeWords", 1)
-                    
+                    # And append it to the rhymeTargetRhymeList so it, itself, is added to the rhyme pool with all
+                    #   of its friends and will be excluded automatically in the next run as well.
+                    rhymeTargetRhymeList.append(rhymeTarget)
+
                     # The rhymeHint is a right-handish segment of the word.
                     #   Optional-vowel-optional-const-required-vowel-optional-const-end-anchor.
                     #   This is a dumb chunky approach, but just for fun..
@@ -287,15 +301,13 @@ class rhymer:
                     rhymePoolId = self.rhymadexDB.query("INSERT INTO `tblRhymePools` \
                                                          (`rhymeHint`, `seedWord`) VALUES \
                                                          (?, ?)", (rhymeHint, rhymeTarget), "", True).lastrowid
-                    # rhymeTargetRhymeList is a list of lists, collapse to a single list of all the words
-                    rhymeTargetRhymeList = [result for list in rhymeTargetRhymeList for result in list]
 
                     for rhymeResult in rhymeTargetRhymeList:
                         # Iterate through each rhymeResult
                         # Record that we've seen it so we don't re-calculate rhymes on this again later
                         self.seenRhymeWords.append(rhymeResult)
-                        # Strip out non-characters.  Some of the returned results have (1) and other crap
-                        # rhymeResult = re.findall("[a-z]*", rhymeResult)[0] # the LineCleaner should handle this
+                        # Strip out non-characters.  Some of the returned results from Phyme have (1) and other crap
+                        rhymeResult = re.findall("[a-z]*", rhymeResult.lower())[0]
                         # Estimate syllables
                         rhymeResultSyllables = syllables.estimate(rhymeResult)
                         # And insert to our rhymeList
@@ -306,8 +318,9 @@ class rhymer:
                                               (rhymeResult, rhymeResultSyllables, rhymePoolId,
                                                rhymeResult), "", True)
                         self.debugger.logStat("DbInsertsRhymeWords", 1)
-                        # It was rhymable, it's been recorded.  It's good to go.
-                        return True
+
+                    # It was rhymable, it's been recorded along with its friends.  It's good to go.
+                    return True
                 except KeyError:
                     # This word isn't rhymable, e.g.
                     #   can't find any rhyming words in the dictionary for this word,
@@ -405,8 +418,8 @@ class rhymadex:
         sourceLines = re.split('[,.!?;:\t\n]', sourceTextBlob)
 
         # Do that little to-dict and back to-list trick to dedupe all the list items
-        self.debugger.logStat("TotalLinesSeen", None, len(sourceLines))
         sourceLines = list(dict.fromkeys(sourceLines))
+        self.debugger.logStat("TotalLinesSeen", None, len(sourceLines))
         self.debugger.logStat("TotalDiscardedLines",
                               (self.debugger.getStat("TotalLinesSeen")-self.debugger.getStat("TotalLinesSeen")))
         self.debugger.message("INFO", "Line entries found: {}".format(self.debugger.getStat("TotalLinesSeen")))
@@ -449,19 +462,15 @@ class rhymadex:
                 else:
                     # firstWord or lastWord is under 1 or over 34 chars long, so pass it by and nothing happens.
                     self.debugger("TotalDiscardedLines", 1)
-
-            if ((self.debugger.getStat("TotalLinesProcessed") == 1) or
-                 self.debugger.getStat("TotalLinesProcessed") % 1000 == 0):
-                percentComplete = int((self.debugger.getStat("TotalLinesProcessed") /
-                                       self.debugger.getStat("TotalLinesSeen")) * 100)
-                print("\r", end="")
-                print("INFO- Estimated build progress:", percentComplete, "%", end="")
             else:
                 # Line is less than 1 or greater than 255, so pass it by and nothing happens.
                 self.debugger.logStat("WontFitLines", 1)
                 self.debugger.logStat("TotalDiscardedLines", 1)
 
-        print(" ... Done.")
+            self.debugger.progress(self.debugger.getStat("TotalLinesProcessed"),
+                                   self.debugger.getStat("TotalLinesSeen"))
+
+        self.debugger.summary()
 
 if __name__ == "__main__":
     rhymadex = rhymadex("textsources/bible/bible.txt")
