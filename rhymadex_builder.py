@@ -17,7 +17,9 @@ class debugger:
         self.stats = {}
         self.messages = []
 
-    def logStat(self, statistic, increment, value=None):
+    def logStat(self, statistic, increment, value=0):
+        if not increment:
+            increment = 0 # In case None gets pushed through
         if not statistic in self.stats:
             self.stats[statistic] = int(increment) or int(value)
         else:
@@ -68,16 +70,16 @@ class rhymadexMariaDB:
                 self.database = dbConfig['mariadb']['database']
                 self.port = dbConfig['mariadb']['port']
             except configparser.Error as e:
-                debugger.message("ERROR", "Configparser error: {}".format(e))
+                self.debugger.message("ERROR", "Configparser error: {}".format(e))
                 sys.exit("Could not find database credential attributes in configfile.  Exiting.")
         else:
             sys.exit("Could not open configfile to read database credentials.  Exiting.")
 
         try:
             # Connect but don't open a database yet
-            debugger.message("INFO",
-                             "Connecting to MariaDB server: {} port {} as {}".format(self.host,
-                                                                                     self.port, self.username))
+            self.debugger.message("INFO",
+                                  "Connecting to MariaDB server: {} port {} as {}".format(self.host,
+                                                                                          self.port, self.username))
             self.connection = mariadb.connect(
                 user=self.username,
                 password=self.password,
@@ -85,14 +87,14 @@ class rhymadexMariaDB:
                 port=int(self.port)
             )
         except mariadb.Error as e:
-            debugger.message("ERROR", "MariaDB Connection error: {}".format(e))
+            self.debugger.message("ERROR", "MariaDB Connection error: {}".format(e))
             sys.exit("Database connection error.  Exiting.")
 
         self.cursor = self.connection.cursor()
 
         if not self.initSchema():
-            debugger.message("ERROR", "Unexpected error while initiailizing DB schema")
-            sys.edit("Could not initialize DB.  Exiting.")
+            self.debugger.message("ERROR", "Unexpected error while initiailizing DB schema")
+            sys.exit("Could not initialize DB.  Exiting.")
 
     def query(self, query, queryParams=None, queryIdentifier="", commitNow=False):
         # My little query wrapper method.
@@ -119,7 +121,8 @@ class rhymadexMariaDB:
             return self.cursor
         except mariadb.Error as e:
             # Stop immediately on an error
-            debugger.message("ERROR", "MariaDB error: {}\n Query: {}\n Parameters: {}".format(e, query, queryParams))
+            self.debugger.message("ERROR", "MariaDB error: {}\n Query: {}\n Parameters: {}".format(e,
+                                                                                                   query, queryParams))
             sys.exit("Database query error.  Exiting.")
 
     def initSchema(self):
@@ -202,17 +205,17 @@ class rhymadexMariaDB:
 
         else:
             # The database exists.  Open it
-            debugger.message("INFO", "Database found.  Opening.")
+            self.debugger.message("INFO", "Database found.  Opening.")
             self.query("USE `{}`", None, self.database)
 
             # Check most recent schema version
             currentVersion = self.query("SELECT max(`versionNum`) AS `versionNum`, \
                                          `dtmInit` FROM `tblVersion`").fetchall()[0]
-            debugger.message("INFO", "Found rhymadex version {} created {}".format(currentVersion[0],
+            self.debugger.message("INFO", "Found rhymadex version {} created {}".format(currentVersion[0],
                                                                                    currentVersion[1]))
 
             if not int(currentVersion[0]) == int(self.schemaCurrentVersion):
-                debugger.message("ERROR",
+                self.debugger.message("ERROR",
                                  "Schema version doesn't match expected version: {}".format(self.schemaCurrentVersion))
                 exit("Won't continue with mismatching schema.  Exiting.")
             # At this point, found the database, the schema version table, and the reported schema
@@ -242,10 +245,11 @@ class rhymer:
                                self.rhymadexDB.query("SELECT `word` FROM `tblRhymeWords`").fetchall()]
         # Collapse to a single list of results
         self.seenRhymeWords = [result for list in self.seenRhymeWords for result in list]
-        self.debugger.logStat("SeenRhymeWords", len(seenRhymeWords))
-        self.debugger.message("INFO", "seenRhymeWords pulled from DB: {}".format(debugger.getStat("SeenRhymeWords")))
+        self.debugger.logStat("SeenRhymeWords", len(self.seenRhymeWords))
+        self.debugger.message("INFO",
+                              "seenRhymeWords pulled from DB: {}".format(self.debugger.getStat("SeenRhymeWords")))
 
-    def calculateRhymes(self, rhymeTarget):
+    def findRhymes(self, rhymeTarget):
         if (rhymeTarget not in self.seenRhymeWords):
             if (rhymeTarget not in self.seenUnrhymableWords):
                 # Haven't found this word to be rhymable in the past (seenRhymeWords) and
@@ -262,12 +266,12 @@ class rhymer:
                     #   6 = not the same vowels but the same consonants (CAT, BOT)
                     # What comes back is a dictionary of syllable counts with
                     #   corresponding lists of rhyme words.
-                    rhymeTargetRhymeList = self.rhyme.get_perfect_rhymes(lastWord).values() # Type 1 rhymes
+                    rhymeTargetRhymeList = self.rhyme.get_perfect_rhymes(rhymeTarget).values() # Type 1 rhymes
                     # KeyError exception will come up if this is empty, caught below.
     
                     # Some rhyme matches came back, so record this as a rhymable word
                     self.seenRhymeWords.append(rhymeTarget)
-                    self.debuger.logStat("NewSourceRhymeWords", 1)
+                    self.debugger.logStat("NewSourceRhymeWords", 1)
                     
                     # The rhymeHint is a right-handish segment of the word.
                     #   Optional-vowel-optional-const-required-vowel-optional-const-end-anchor.
@@ -308,7 +312,7 @@ class rhymer:
                     # This word isn't rhymable, e.g.
                     #   can't find any rhyming words in the dictionary for this word,
                     #   so just discard this line entirely and move along.
-                    self.debugger("TotalUnrhymable", 1)
+                    self.debugger.logStat("TotalUnrhymable", 1)
                     self.seenUnrhymableWords.append(rhymeTarget)
                     return False
             else:
@@ -363,9 +367,7 @@ class rhymadex:
         return line or None
 
     def buildRhymadex(self):
-
-        self.debugger("INFO", "Opening file for processing: {}".format(self.sourceFile))
-
+        self.debugger.message("INFO", "Opening file for processing: {}".format(self.sourceFile))
         try:
             sourceTextFile = open(self.sourceFile, 'r', encoding = "ISO-8859-1")
             # sourceTextBlob = sourceTextFile.read().replace('\n', ' ')
@@ -381,7 +383,7 @@ class rhymadex:
                               VALUES \
                               (?, now()) \
                               ON DUPLICATE KEY UPDATE \
-                              `dtmInit` = now()", (sourceFile,), "", True)
+                              `dtmInit` = now()", (self.sourceFile,), "", True)
 
         # Re-query to capture the sourceId.  Could potentially do it all-at-once above, but the DUPLICATE KEY UPDATE
         #   makes the behavior less clear and less easy for me to understand.  I think this is more clear and not too
@@ -389,26 +391,25 @@ class rhymadex:
         sourceId = self.rhymadexDB.query("SELECT `id` FROM `tblSources` \
                                           WHERE \
                                           (`sourceName` = ?) \
-                                          LIMIT 1", (sourceFile,)).fetchall()[0]
+                                          LIMIT 1", (self.sourceFile,)).fetchall()[0][0]
 
         # Remove any existing source lines 'cause we're gunna rebuild them now
         deletedLines = self.rhymadexDB.query("DELETE FROM `tblLines` \
                                               WHERE (`source` = ?)", (sourceId,), "", True).rowcount
         if deletedLines:
-            debugger.message("INFO", "Deleted {} existing source lines from tblLines.".format(deletedLines))
+            self.debugger.message("INFO", "Deleted {} existing source lines from tblLines.".format(deletedLines))
 
         # Break Lines apart on: , . ! ? ; : tabspace newline
         #   IMO some of the most interesting magic happens on the comma split because it results in
         #   poetic sentence fragments
         sourceLines = re.split('[,.!?;:\t\n]', sourceTextBlob)
 
-        self.debugger.message("INFO", "Deduplicating line list ...")
         # Do that little to-dict and back to-list trick to dedupe all the list items
         self.debugger.logStat("TotalLinesSeen", None, len(sourceLines))
         sourceLines = list(dict.fromkeys(sourceLines))
         self.debugger.logStat("TotalDiscardedLines",
-                              (debugger.getStat("TotalLinesSeen")-self.debugger.getStat("TotalLinesSeen")))
-        self.debugger.message("INFO", "Line entries found: {}".format(debugger.getStat("TotalLinesSeen")))
+                              (self.debugger.getStat("TotalLinesSeen")-self.debugger.getStat("TotalLinesSeen")))
+        self.debugger.message("INFO", "Line entries found: {}".format(self.debugger.getStat("TotalLinesSeen")))
 
         for sourceLine in sourceLines:
             self.debugger.logStat("TotalLinesProcessed", 1)
@@ -420,8 +421,8 @@ class rhymadex:
 
             # Anything longer than 255 won't fit in the DB with this schema.
             if (sourceLine and (len(sourceLine) < 256)):
-                self.debugger.logStat("TotalWordsProcessed", len(sourceLineWords))
                 sourceLineWords = sourceLine.split()
+                self.debugger.logStat("TotalWordsProcessed", len(sourceLineWords))
                 firstWord = sourceLineWords[0]
                 lastWord = sourceLineWords[-1]
 
@@ -436,7 +437,7 @@ class rhymadex:
                     self.debugger.logStat("TotalSyllablesSeen", sourceLineSyllables)
 
                     # Look up rhymes for the firstWord and the lastWord
-                    if (self.rhymer(firstWord) and self.rhymer(lastWord)):
+                    if (self.rhymer.findRhymes(firstWord) and self.rhymer.findRhymes(lastWord)):
                         # If everything came out rhymable, insert the line
                         self.rhymadexDB.query("INSERT INTO `tblLines` \
                                                 (`firstWord`, `lastWord`, `line`, `syllables`, `source`) \
@@ -457,8 +458,8 @@ class rhymadex:
                 print("INFO- Estimated build progress:", percentComplete, "%", end="")
             else:
                 # Line is less than 1 or greater than 255, so pass it by and nothing happens.
-                self.debug['WontFitLines'] += 1
-                self.debug['TotalDiscardedLines'] += 1
+                self.debugger.logStat("WontFitLines", 1)
+                self.debugger.logStat("TotalDiscardedLines", 1)
 
         print(" ... Done.")
 
