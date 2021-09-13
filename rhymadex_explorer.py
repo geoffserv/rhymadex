@@ -50,8 +50,18 @@ class song:
                     rhymeGroups[lineDef[wordIndex]]["rhymePoolId"] = rhymeGroup
 
         self.debugger.message("INFO", rhymeGroups)
-            #candidateLines = self.rhymadexDB.query("SELECT `tblLines`.`line` FROM `tblLines` \
-            #                                        WHERE (`tblLines`.`syllables` = ?
+
+        # Joining and selection
+        #SELECT
+  #tblLines.line as line,
+  #tblLines.firstWord as firstWord,
+  #tblLines.lastWord as lastWord,
+  #firstRhymeWords.rhymePool as firstWordRhymeGroup,
+  #lastRhymeWords.rhymePool as lastWordRhymeGroup
+#FROM
+  #tblLines
+#INNER JOIN tblRhymeWords firstRhymeWords ON tblLines.firstWord = firstRhymeWords.word
+#INNER JOIN tblRhymeWords lastRhymeWords ON tblLines.lastWord = lastRhymeWords.word limit 10;
 
 if __name__ == "__main__":
     songDef = [ [None, 1,    None, ["if"], None, 4,    None, "A", 1,    None, None, None],
