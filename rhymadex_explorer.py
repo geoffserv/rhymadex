@@ -30,13 +30,68 @@ class song:
         wordIndices = {"firstWord": 0, "lastWord" : 7}
 
         for lineDef in self.songDef:
+            # If the line has ANY attribute specification, we need a WHERE clause
+            # So for example if the lineDef is completely empty, the query produces a totally random result
+            # That might be something that someone actually wants.
+            someAttributeExists = False
+            for attribute in lineDef:
+                if (attribute): someAttributeExists = True
+
             # Check firstWord (songDef index[0]) and lastWord (songDef index[7]) rhymeGroups
             for wordIndex in wordIndices:
                 if lineDef[wordIndices[wordIndex]] and lineDef[wordIndices[wordIndex]] not in rhymeGroups:
+                    # This line has a rhymeGroup in either the first or lastWord position
+                    # and we haven't encountered it before, so need to search to find an appropriate
+                    # rhymePool to assign to that group
+                    rhymeGroups[lineDef[wordIndices[wordIndex]]] = {}
+                    rhymeGroups[lineDef[wordIndices[wordIndex]]]["wordPosition"] = wordIndex
+
                     # Pick out a rhymePool ID for this new rhymeGroup.
                     # Query for a rhymePool ID which is referenced by 2* numLines in this song
                     #   by either the first or lastword with the proper line syllable count+-padding
                     #   so there is a good diversity of lines to choose from when building the song
+                    # TODO exclude previously chosen rhymePools so don't accidentally pick the same multiple times
+                    # TODO maybe a NOT IN string builder method?
+
+                    rhymePoolQuery = "SELECT COUNT(`tblLines`.`id`) AS candidateLineCount, \
+                                      `lastRhymeWords`.`rhymePool` AS lastWordRhymeGroup \
+                                      FROM `tblLines` \
+                                      INNER JOIN `tblRhymeWords` lastRhymeWords \
+                                      ON `tblLines`.`{}` = `lastRhymeWords`.`word` \
+                                      WHERE ((`tblLines`.`syllables` >= {}) \
+                                      AND    (`tblLines`.`syllables` <= {})) \
+                                      GROUP BY `lastWordRhymeGroup` \
+                                      HAVING `candidateLineCount` > {} \
+                                      ORDER BY RAND() LIMIT 1;".format(wordIndex,
+                                                                       lineDef[5] - self.syllablePadding,
+                                                                       lineDef[5] + self.syllablePadding,
+                                                                       str(2 * self.songNumLines))
+
+                    rhymePool = self.rhymadexDB.query(rhymePoolQuery).fetchall()[0][0]
+                    rhymeGroups[lineDef[wordIndices[wordIndex]]]["rhymePoolId"] = rhymePool
+
+                # Build a line query to pick out this line
+
+                # lineQuery = "SELECT `tblLines`.`line` AS line, \
+                #              `tblLines`.`syllables` as lineSyllables, \
+                #              `tblLines`.`firstWord` AS firstWord, \
+                #              `firstRhymeWords`.`syllables` AS firstWordSyllables, \
+                #              `firstRhymeWords`.`rhymePool` AS firstWordRhymeGroup, \
+                #              `tblLines`.`lastWord` AS lastWord, \
+                #              `lastRhymeWords`.`syllables` AS lastWordSyllables, \
+                #              `lastRhymeWords`.`rhymePool` AS lastWordRhymeGroup \
+                #              FROM `tblLines` \
+                #              INNER JOIN `tblRhymeWords` firstRhymeWords \
+                #              ON `tblLines`.`firstWord` = `firstRhymeWords`.`word` \
+                #              INNER JOIN `tblRhymeWords` lastRhymeWords \
+                #              ON `tblLines`.`lastWord` = `lastRhymeWords`.`word`"
+
+                # if someAttributeExists then build a where clause
+
+                             # WHERE (`tblLines`.`syllables` = 8 \
+                             # AND `lastRhymeWords`.`rhymePool` = 42) \
+                             # AND `tblLines`.`lastWord` NOT IN ("line","signs") \
+                             # limit 10;"
 
                     # I have a better idea than this, but this is still interesting and I might use
                     # this kind of code for something later.
@@ -57,23 +112,13 @@ class song:
                     # rhymeGroup = self.rhymadexDB.query("SELECT `rhymePool` FROM `tblRhymeWords` GROUP BY `rhymePool` \
                     #                                     HAVING {} ORDER BY RAND() LIMIT 1", None,
                     #                                    havingClause).fetchall()[0][0]
-                    rhymeGroups[lineDef[wordIndices[wordIndex]]] = { }
-                    rhymeGroups[lineDef[wordIndices[wordIndex]]]["wordPosition"] = wordIndex
+
                     # rhymeGroups[lineDef[wordIndex]]["rhymePoolId"] = rhymeGroup
 
         self.debugger.message("INFO", rhymeGroups)
 
         # Joining and selection
-        #SELECT
-  #tblLines.line as line,
-  #tblLines.firstWord as firstWord,
-  #tblLines.lastWord as lastWord,
-  #firstRhymeWords.rhymePool as firstWordRhymeGroup,
-  #lastRhymeWords.rhymePool as lastWordRhymeGroup
-#FROM
-  #tblLines
-#INNER JOIN tblRhymeWords firstRhymeWords ON tblLines.firstWord = firstRhymeWords.word
-#INNER JOIN tblRhymeWords lastRhymeWords ON tblLines.lastWord = lastRhymeWords.word limit 10;
+
 
 #SELECT
 #   count(tblLines.id),

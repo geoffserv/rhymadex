@@ -124,7 +124,8 @@ class rhymadexMariaDB:
         # If you wanna just commit after a batch of un-committed queries, send nothing as the query for ex.
         #   db.query(None, None, "", True)
         try:
-            if query: self.cursor.execute(query.format(self.connection.escape_string(queryIdentifier)), queryParams)
+            if query: self.cursor.execute(query.format(self.connection.escape_string(str(queryIdentifier))),
+                                          queryParams)
             if commitNow: self.connection.commit() # Gotta commit after INSERTs, etc.  Or, DIY
             return self.cursor
         except mariadb.Error as e:
