@@ -26,49 +26,80 @@ class song:
         # to associate with each songDef rhyme group.
         rhymeGroups = { }
 
-        # Helper dict to associate the tblLines column name with the songDef dict index
-        wordIndices = {"firstWord": 0, "lastWord" : 7}
+        # Need to pre-process the songDef to get some top level facts about each requested rhymeGroup
+        # prior to building a query to search for an appropriate rhymePool
+        # In what positions do each rhymeGroup appear throughout the overall song?
+        # What are the needed syllable counts for each word position & the overall line?
+        # I want to select rhymePools that are guaranteed to be fruitful across the entire song,
+        # so I need to know everything about what will eventually be pulled from the chosen pool.
+
+        # Helper dict to associate the word specifications with the songDef dict index
+        # Values are a list:
+        # [0] = location of rhymeGroup identifier like "A", "B" ... in lineDef
+        # [1] = location of syllable requirements ... in lineDef
+        # [2] = location of include-only lists ... in lineDef
+        # [3] = location of exclude lists ... in lineDef
+        wordIndices = {"firstWord": [0, 1, 2, 3], "lastWord" : [7, 8, 9, 10]}
 
         for lineDef in self.songDef:
-            # If the line has ANY attribute specification, we need a WHERE clause
-            # So for example if the lineDef is completely empty, the query produces a totally random result
-            # That might be something that someone actually wants.
-            someAttributeExists = False
-            for attribute in lineDef:
-                if (attribute): someAttributeExists = True
-
-            # Check firstWord (songDef index[0]) and lastWord (songDef index[7]) rhymeGroups
-            for wordIndex in wordIndices:
-                if lineDef[wordIndices[wordIndex]] and lineDef[wordIndices[wordIndex]] not in rhymeGroups:
+            for wordIndex in wordIndices: # loop through "firstWord" then "lastWord"
+                if lineDef[wordIndices[wordIndex][0]]: # If there is a rhymeGroup Identifier found like "A"
                     # This line has a rhymeGroup in either the first or lastWord position
-                    # and we haven't encountered it before, so need to search to find an appropriate
-                    # rhymePool to assign to that group
-                    rhymeGroups[lineDef[wordIndices[wordIndex]]] = {}
-                    rhymeGroups[lineDef[wordIndices[wordIndex]]]["wordPosition"] = wordIndex
+                    if lineDef[wordIndices[wordIndex][0]] not in rhymeGroups:
+                        # and we haven't encountered it before, so initialize a sub-dict
+                        rhymeGroups[lineDef[wordIndices[wordIndex][0]]] = {}
+                    # record the position it's been found in like 'firstWord':True
+                    rhymeGroups[lineDef[wordIndices[wordIndex][0]]][wordIndex] = True
 
-                    # Pick out a rhymePool ID for this new rhymeGroup.
-                    # Query for a rhymePool ID which is referenced by 2* numLines in this song
-                    #   by either the first or lastword with the proper line syllable count+-padding
-                    #   so there is a good diversity of lines to choose from when building the song
-                    # TODO exclude previously chosen rhymePools so don't accidentally pick the same multiple times
-                    # TODO maybe a NOT IN string builder method?
+                    if lineDef[wordIndices[wordIndex][1]]: # If there is a syllable count restriction for this word
+                        if not wordIndex+"Syllables" in rhymeGroups[lineDef[wordIndices[wordIndex][0]]]:
+                            # And it's the first time we've encountered this rhymeGroup w/ a syllable restriction
+                            # Initialize a list to hold syllable restrictions for this position
+                            rhymeGroups[lineDef[wordIndices[wordIndex][0]]][wordIndex + "Syllables"] = []
+                        # record this syllable restrction for this position
+                        rhymeGroups[lineDef[wordIndices[wordIndex][0]]][wordIndex + "Syllables"].\
+                            append(lineDef[wordIndices[wordIndex][1]])
 
-                    rhymePoolQuery = "SELECT COUNT(`tblLines`.`id`) AS candidateLineCount, \
-                                      `lastRhymeWords`.`rhymePool` AS lastWordRhymeGroup \
-                                      FROM `tblLines` \
-                                      INNER JOIN `tblRhymeWords` lastRhymeWords \
-                                      ON `tblLines`.`{}` = `lastRhymeWords`.`word` \
-                                      WHERE ((`tblLines`.`syllables` >= {}) \
-                                      AND    (`tblLines`.`syllables` <= {})) \
-                                      GROUP BY `lastWordRhymeGroup` \
-                                      HAVING `candidateLineCount` > {} \
-                                      ORDER BY RAND() LIMIT 1;".format(wordIndex,
-                                                                       lineDef[5] - self.syllablePadding,
-                                                                       lineDef[5] + self.syllablePadding,
-                                                                       str(2 * self.songNumLines))
+        # for lineDef in self.songDef:
+        #     # If the line has ANY attribute specification, we need a WHERE clause
+        #     # So for example if the lineDef is completely empty, the query produces a totally random result
+        #     # That might be something that someone actually wants.
+        #     someAttributeExists = False
+        #     for attribute in lineDef:
+        #         if (attribute): someAttributeExists = True
 
-                    rhymePool = self.rhymadexDB.query(rhymePoolQuery).fetchall()[0][0]
-                    rhymeGroups[lineDef[wordIndices[wordIndex]]]["rhymePoolId"] = rhymePool
+            # # Check firstWord (songDef index[0]) and lastWord (songDef index[7]) rhymeGroups
+            # for wordIndex in wordIndices:
+            #     if lineDef[wordIndices[wordIndex]] and lineDef[wordIndices[wordIndex]] not in rhymeGroups:
+            #         # This line has a rhymeGroup in either the first or lastWord position
+            #         # and we haven't encountered it before, so need to search to find an appropriate
+            #         # rhymePool to assign to that group
+            #         rhymeGroups[lineDef[wordIndices[wordIndex]]] = {}
+            #         rhymeGroups[lineDef[wordIndices[wordIndex]]]["wordPosition"] = wordIndex
+            #
+            #         # Pick out a rhymePool ID for this new rhymeGroup.
+            #         # Query for a rhymePool ID which is referenced by 2* numLines in this song
+            #         #   by either the first or lastword with the proper line syllable count+-padding
+            #         #   so there is a good diversity of lines to choose from when building the song
+            #         # TODO exclude previously chosen rhymePools so don't accidentally pick the same multiple times
+            #         # TODO maybe a NOT IN string builder method?
+            #
+            #         rhymePoolQuery = "SELECT COUNT(`tblLines`.`id`) AS candidateLineCount, \
+            #                           `lastRhymeWords`.`rhymePool` AS lastWordRhymeGroup \
+            #                           FROM `tblLines` \
+            #                           INNER JOIN `tblRhymeWords` lastRhymeWords \
+            #                           ON `tblLines`.`{}` = `lastRhymeWords`.`word` \
+            #                           WHERE ((`tblLines`.`syllables` >= {}) \
+            #                           AND    (`tblLines`.`syllables` <= {})) \
+            #                           GROUP BY `lastWordRhymeGroup` \
+            #                           HAVING `candidateLineCount` > {} \
+            #                           ORDER BY RAND() LIMIT 1;".format(wordIndex,
+            #                                                            lineDef[5] - self.syllablePadding,
+            #                                                            lineDef[5] + self.syllablePadding,
+            #                                                            str(2 * self.songNumLines))
+            #
+            #         rhymePool = self.rhymadexDB.query(rhymePoolQuery).fetchall()[0][0]
+            #         rhymeGroups[lineDef[wordIndices[wordIndex]]]["rhymePoolId"] = rhymePool
 
                 # Build a line query to pick out this line
 
@@ -130,10 +161,10 @@ class song:
 
 if __name__ == "__main__":
     songDef = [ [None, 1,    None, ["if"], None, 4,    None, "A", 1,    None, None, None],
-                ["Q",  None, None, None,   None, 8,    None, "A", None, None, None, None],
+                ["A",  2,    None, None,   None, 8,    None, "A", 5,    None, None, None],
                 [None, None, None, None,   None, 3,    None, "B", None, None, None, None],
                 [None, None, None, None,   None, 3,    None, "B", None, None, None, None],
-                ["Q",  None, None, None,   None, 9,    None, "A", None, None, None, 1   ],
+                ["A",  3,    None, None,   None, 9,    None, "A", None, None, None, 1   ],
                 [None, None, None, None,   1,    6,    None, "C", None, None, None, None],
                 [None, None, None, None,   None, None, 5,   None, None, None, None, None],
                 [None, 3,    None, None,   None, 6,    None, "D", None, None, None, None],
