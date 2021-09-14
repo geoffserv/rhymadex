@@ -11,43 +11,55 @@ class song:
         self.debugger = debugger()
         self.rhymadexDB = rhymadexMariaDB(self.debugger)
 
+        # Consider candidates which are plus-or-minus this many syllables per line
+        # The syllable estimator is inaccurate, and good option to keep the pipeline
+        # a bit wider while querying for candidate lines
+        self.syllablePadding = 1
+
         self.songDef = songDef
         self.songNumLines = len(self.songDef)
 
         self.generateSong()
 
     def generateSong(self):
-        # Tally up how many unique rhymegroups there are.  Initialize a dict to associate a rhymepool
-        # with each rhymegroup
+        # The starting point for line selection hinges on first choosing appropriate tblRhymePool IDs
+        # to associate with each songDef rhyme group.
         rhymeGroups = { }
 
+        # Helper dict to associate the tblLines column name with the songDef dict index
+        wordIndices = {"firstWord": 0, "lastWord" : 7}
+
         for lineDef in self.songDef:
-            # Check firstWord[0] and lastWord[7] rhymeGroups
-            for wordIndex in [0, 7]:
-                if lineDef[wordIndex] and lineDef[wordIndex] not in rhymeGroups:
-                    # Pick out a rhymeGroup ID for this new rhymeGroup.
-                    # Look for groups with more candidates than there are lines in this song,
-                    # to assure some interesting results
+            # Check firstWord (songDef index[0]) and lastWord (songDef index[7]) rhymeGroups
+            for wordIndex in wordIndices:
+                if lineDef[wordIndices[wordIndex]] and lineDef[wordIndices[wordIndex]] not in rhymeGroups:
+                    # Pick out a rhymePool ID for this new rhymeGroup.
+                    # Query for a rhymePool ID which is referenced by 2* numLines in this song
+                    #   by either the first or lastword with the proper line syllable count+-padding
+                    #   so there is a good diversity of lines to choose from when building the song
 
-                    # Build a HAVING clause as we go, to make sure every next choice is a new choice
-                    havingClause = "((COUNT(`id`) > {} )".format(self.songNumLines)
-                    if len(rhymeGroups) > 0:
-                        # If this is our 2nd or more iteration, begin tagging on all previously chosen
-                        # rhyme groups
-                        havingClause += " AND (`rhymePool` not in ("
-                        for excludeRhymeGroup in rhymeGroups:
-                            # self.debugger.message("INFO", rhymeGroups[excludeRhymeGroup]["rhymePoolId"])
-                            havingClause += str(rhymeGroups[excludeRhymeGroup]["rhymePoolId"]) + ","
-                        # Strip the last comma.  This sucks but fine for POC
-                        havingClause = havingClause.rstrip(',')
-                        havingClause += "))"
-                    havingClause += ")"
+                    # I have a better idea than this, but this is still interesting and I might use
+                    # this kind of code for something later.
+                    # # Build a HAVING clause as we go, to make sure every next choice is a new choice
+                    # havingClause = "((COUNT(`id`) > {} )".format(self.songNumLines)
+                    # if len(rhymeGroups) > 0:
+                    #     # If this is our 2nd or more iteration, begin tagging on all previously chosen
+                    #     # rhyme groups
+                    #     havingClause += " AND (`rhymePool` not in ("
+                    #     for excludeRhymeGroup in rhymeGroups:
+                    #         # self.debugger.message("INFO", rhymeGroups[excludeRhymeGroup]["rhymePoolId"])
+                    #         havingClause += str(rhymeGroups[excludeRhymeGroup]["rhymePoolId"]) + ","
+                    #     # Strip the last comma.  This sucks but fine for POC
+                    #     havingClause = havingClause.rstrip(',')
+                    #     havingClause += "))"
+                    # havingClause += ")"
 
-                    rhymeGroup = self.rhymadexDB.query("SELECT `rhymePool` FROM `tblRhymeWords` GROUP BY `rhymePool` \
-                                                        HAVING {} ORDER BY RAND() LIMIT 1", None,
-                                                       havingClause).fetchall()[0][0]
-                    rhymeGroups[lineDef[wordIndex]] = { }
-                    rhymeGroups[lineDef[wordIndex]]["rhymePoolId"] = rhymeGroup
+                    # rhymeGroup = self.rhymadexDB.query("SELECT `rhymePool` FROM `tblRhymeWords` GROUP BY `rhymePool` \
+                    #                                     HAVING {} ORDER BY RAND() LIMIT 1", None,
+                    #                                    havingClause).fetchall()[0][0]
+                    rhymeGroups[lineDef[wordIndices[wordIndex]]] = { }
+                    rhymeGroups[lineDef[wordIndices[wordIndex]]]["wordPosition"] = wordIndex
+                    # rhymeGroups[lineDef[wordIndex]]["rhymePoolId"] = rhymeGroup
 
         self.debugger.message("INFO", rhymeGroups)
 
@@ -62,6 +74,14 @@ class song:
   #tblLines
 #INNER JOIN tblRhymeWords firstRhymeWords ON tblLines.firstWord = firstRhymeWords.word
 #INNER JOIN tblRhymeWords lastRhymeWords ON tblLines.lastWord = lastRhymeWords.word limit 10;
+
+#SELECT
+#   count(tblLines.id),
+#   lastRhymeWords.rhymePool as lastWordRhymeGroup FROM
+#   tblLines
+#INNER JOIN tblRhymeWords lastRhymeWords ON tblLines.lastWord = lastRhymeWords.word
+#where ((tblLines.syllables >= 3) and (tblLines.syllables <=5))
+#group by lastWordRhymeGroup having count(tblLines.id) > 12 order by rand() limit 10;
 
 if __name__ == "__main__":
     songDef = [ [None, 1,    None, ["if"], None, 4,    None, "A", 1,    None, None, None],
