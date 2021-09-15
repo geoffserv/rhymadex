@@ -39,26 +39,40 @@ class song:
         # [1] = location of syllable requirements ... in lineDef
         # [2] = location of include-only lists ... in lineDef
         # [3] = location of exclude lists ... in lineDef
-        wordIndices = {"firstWord": [0, 1, 2, 3], "lastWord" : [7, 8, 9, 10]}
+        wordIndices = {"firstWord": {"rhymeGroup": 0, "options": { "Syllables": 1, "IncludeOnly": 2, "Exclude": 3 } } ,
+                       "lastWord" : {"rhymeGroup": 7, "options": { "Syllables": 8, "IncludeOnly": 9, "Exclude": 10 } } }
 
         for lineDef in self.songDef:
             for wordIndex in wordIndices: # loop through "firstWord" then "lastWord"
-                if lineDef[wordIndices[wordIndex][0]]: # If there is a rhymeGroup Identifier found like "A"
+                if lineDef[wordIndices[wordIndex]["rhymeGroup"]]: # If there is a rhymeGroup Identifier found like "A"
                     # This line has a rhymeGroup in either the first or lastWord position
-                    if lineDef[wordIndices[wordIndex][0]] not in rhymeGroups:
+                    if lineDef[wordIndices[wordIndex]["rhymeGroup"]] not in rhymeGroups:
                         # and we haven't encountered it before, so initialize a sub-dict
-                        rhymeGroups[lineDef[wordIndices[wordIndex][0]]] = {}
+                        rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]] = {}
                     # record the position it's been found in like 'firstWord':True
-                    rhymeGroups[lineDef[wordIndices[wordIndex][0]]][wordIndex] = True
+                    rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]][wordIndex] = True
 
-                    if lineDef[wordIndices[wordIndex][1]]: # If there is a syllable count restriction for this word
-                        if not wordIndex+"Syllables" in rhymeGroups[lineDef[wordIndices[wordIndex][0]]]:
-                            # And it's the first time we've encountered this rhymeGroup w/ a syllable restriction
-                            # Initialize a list to hold syllable restrictions for this position
-                            rhymeGroups[lineDef[wordIndices[wordIndex][0]]][wordIndex + "Syllables"] = []
-                        # record this syllable restrction for this position
-                        rhymeGroups[lineDef[wordIndices[wordIndex][0]]][wordIndex + "Syllables"].\
-                            append(lineDef[wordIndices[wordIndex][1]])
+                    for lineOption in wordIndices[wordIndex]["options"]:
+                        # loop through each of the line options pertaining to a firstWord or lastWord
+                        if lineDef[wordIndices[wordIndex]["options"][lineOption]]:
+                            # If one of the options has been defined for this line...
+                            if not lineOption in rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]]:
+                                # And it's the first time we've encountered this rhymeGroup w/ such a restriction
+                                # Initialize a list to hold the restriction
+                                rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]][wordIndex + lineOption] = []
+                            # Record this restriction for this position
+                            print(rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]][wordIndex + lineOption])
+                            rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]][wordIndex + lineOption].\
+                              append(lineDef[wordIndices[wordIndex]["options"][lineOption]])
+
+                    # if lineDef[wordIndices[wordIndex][1]]: # If there is a syllable count restriction for this word
+                    #     if not wordIndex+"Syllables" in rhymeGroups[lineDef[wordIndices[wordIndex][0]]]:
+                    #         # And it's the first time we've encountered this rhymeGroup w/ a syllable restriction
+                    #         # Initialize a list to hold syllable restrictions for this position
+                    #         rhymeGroups[lineDef[wordIndices[wordIndex][0]]][wordIndex + "Syllables"] = []
+                    #     # record this syllable restrction for this position
+                    #     rhymeGroups[lineDef[wordIndices[wordIndex][0]]][wordIndex + "Syllables"].\
+                    #         append(lineDef[wordIndices[wordIndex][1]])
 
         # for lineDef in self.songDef:
         #     # If the line has ANY attribute specification, we need a WHERE clause
