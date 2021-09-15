@@ -39,8 +39,8 @@ class song:
         # [1] = location of syllable requirements ... in lineDef
         # [2] = location of include-only lists ... in lineDef
         # [3] = location of exclude lists ... in lineDef
-        wordIndices = {"firstWord": {"rhymeGroup": 0, "options": { "Syllables": 1, "IncludeOnly": 2, "Exclude": 3 } } ,
-                       "lastWord" : {"rhymeGroup": 7, "options": { "Syllables": 8, "IncludeOnly": 9, "Exclude": 10 } } }
+        wordIndices = {"firstWord": {"rhymeGroup": 0, "options": { "Syllables": 1, "Exclude": 2, "IncludeOnly": 3 } } ,
+                       "lastWord" : {"rhymeGroup": 7, "options": { "Syllables": 8, "Exclude": 9, "IncludeOnly": 10 } } }
 
         for lineDef in self.songDef:
             for wordIndex in wordIndices: # loop through "firstWord" then "lastWord"
@@ -56,23 +56,58 @@ class song:
                         # loop through each of the line options pertaining to a firstWord or lastWord
                         if lineDef[wordIndices[wordIndex]["options"][lineOption]]:
                             # If one of the options has been defined for this line...
-                            if not lineOption in rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]]:
+                            if not wordIndex + lineOption in rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]]:
                                 # And it's the first time we've encountered this rhymeGroup w/ such a restriction
                                 # Initialize a list to hold the restriction
                                 rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]][wordIndex + lineOption] = []
                             # Record this restriction for this position
-                            print(rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]][wordIndex + lineOption])
+
                             rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]][wordIndex + lineOption].\
                               append(lineDef[wordIndices[wordIndex]["options"][lineOption]])
 
-                    # if lineDef[wordIndices[wordIndex][1]]: # If there is a syllable count restriction for this word
-                    #     if not wordIndex+"Syllables" in rhymeGroups[lineDef[wordIndices[wordIndex][0]]]:
-                    #         # And it's the first time we've encountered this rhymeGroup w/ a syllable restriction
-                    #         # Initialize a list to hold syllable restrictions for this position
-                    #         rhymeGroups[lineDef[wordIndices[wordIndex][0]]][wordIndex + "Syllables"] = []
-                    #     # record this syllable restrction for this position
-                    #     rhymeGroups[lineDef[wordIndices[wordIndex][0]]][wordIndex + "Syllables"].\
-                    #         append(lineDef[wordIndices[wordIndex][1]])
+        self.debugger.message("INFO", rhymeGroups)
+
+        for rhymeGroup in rhymeGroups:
+            self.debugger.message("INFO", "Rhymegroup {}:".format(rhymeGroup))
+
+            if "firstWord" in rhymeGroups[rhymeGroup]:
+                self.debugger.message("INFO", "   Used as a firstWord")
+
+            if "lastWord" in rhymeGroups[rhymeGroup]:
+                self.debugger.message("INFO", "   Used as a lastWord")
+
+            if "firstWordSyllables" in rhymeGroups[rhymeGroup]:
+                for syllables in rhymeGroups[rhymeGroup]["firstWordSyllables"]:
+                    self.debugger.message("INFO", "   firstWord syllables: {}".format(syllables))
+
+            if "lastWordSyllables" in rhymeGroups[rhymeGroup]:
+                for syllables in rhymeGroups[rhymeGroup]["lastWordSyllables"]:
+                    self.debugger.message("INFO", "   lastWord syllables: {}".format(syllables))
+
+            if "firstWordIncludeOnly" in rhymeGroups[rhymeGroup]:
+                for word in rhymeGroups[rhymeGroup]["firstWordIncludeOnly"]:
+                    self.debugger.message("INFO", "   firstWordIncludeOnly: {}".format(word))
+
+            if "firstWordExclude" in rhymeGroups[rhymeGroup]:
+                for word in rhymeGroups[rhymeGroup]["firstWordExclude"]:
+                    self.debugger.message("INFO", "   firstWordExclude: {}".format(word))
+
+            if "lastWordIncludeOnly" in rhymeGroups[rhymeGroup]:
+                for word in rhymeGroups[rhymeGroup]["lastWordIncludeOnly"]:
+                    self.debugger.message("INFO", "   lastWordIncludeOnly: {}".format(word))
+
+            if "lastWordExclude" in rhymeGroups[rhymeGroup]:
+                for word in rhymeGroups[rhymeGroup]["lastWordExclude"]:
+                    self.debugger.message("INFO", "   lastWordExclude: {}".format(word))
+
+        # if lineDef[wordIndices[wordIndex][1]]: # If there is a syllable count restriction for this word
+        #     if not wordIndex+"Syllables" in rhymeGroups[lineDef[wordIndices[wordIndex][0]]]:
+        #         # And it's the first time we've encountered this rhymeGroup w/ a syllable restriction
+        #         # Initialize a list to hold syllable restrictions for this position
+        #         rhymeGroups[lineDef[wordIndices[wordIndex][0]]][wordIndex + "Syllables"] = []
+        #     # record this syllable restrction for this position
+        #     rhymeGroups[lineDef[wordIndices[wordIndex][0]]][wordIndex + "Syllables"].\
+        #         append(lineDef[wordIndices[wordIndex][1]])
 
         # for lineDef in self.songDef:
         #     # If the line has ANY attribute specification, we need a WHERE clause
@@ -160,8 +195,6 @@ class song:
 
                     # rhymeGroups[lineDef[wordIndex]]["rhymePoolId"] = rhymeGroup
 
-        self.debugger.message("INFO", rhymeGroups)
-
         # Joining and selection
 
 
@@ -175,7 +208,7 @@ class song:
 
 if __name__ == "__main__":
     songDef = [ [None, 1,    None, ["if"], None, 4,    None, "A", 1,    None, None, None],
-                ["A",  2,    None, None,   None, 8,    None, "A", 5,    None, None, None],
+                ["A",  2,    None, ["if", "with"],   None, 8,    None, "A", 5,    None, None, None],
                 [None, None, None, None,   None, 3,    None, "B", None, None, None, None],
                 [None, None, None, None,   None, 3,    None, "B", None, None, None, None],
                 ["A",  3,    None, None,   None, 9,    None, "A", None, None, None, 1   ],
