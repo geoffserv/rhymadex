@@ -69,36 +69,14 @@ class song:
 
         for rhymeGroup in rhymeGroups:
             self.debugger.message("INFO", "Rhymegroup {}:".format(rhymeGroup))
-
-            if "firstWord" in rhymeGroups[rhymeGroup]:
-                self.debugger.message("INFO", "   Used as a firstWord")
-
-            if "lastWord" in rhymeGroups[rhymeGroup]:
-                self.debugger.message("INFO", "   Used as a lastWord")
-
-            if "firstWordSyllables" in rhymeGroups[rhymeGroup]:
-                for syllables in rhymeGroups[rhymeGroup]["firstWordSyllables"]:
-                    self.debugger.message("INFO", "   firstWord syllables: {}".format(syllables))
-
-            if "lastWordSyllables" in rhymeGroups[rhymeGroup]:
-                for syllables in rhymeGroups[rhymeGroup]["lastWordSyllables"]:
-                    self.debugger.message("INFO", "   lastWord syllables: {}".format(syllables))
-
-            if "firstWordIncludeOnly" in rhymeGroups[rhymeGroup]:
-                for word in rhymeGroups[rhymeGroup]["firstWordIncludeOnly"]:
-                    self.debugger.message("INFO", "   firstWordIncludeOnly: {}".format(word))
-
-            if "firstWordExclude" in rhymeGroups[rhymeGroup]:
-                for word in rhymeGroups[rhymeGroup]["firstWordExclude"]:
-                    self.debugger.message("INFO", "   firstWordExclude: {}".format(word))
-
-            if "lastWordIncludeOnly" in rhymeGroups[rhymeGroup]:
-                for word in rhymeGroups[rhymeGroup]["lastWordIncludeOnly"]:
-                    self.debugger.message("INFO", "   lastWordIncludeOnly: {}".format(word))
-
-            if "lastWordExclude" in rhymeGroups[rhymeGroup]:
-                for word in rhymeGroups[rhymeGroup]["lastWordExclude"]:
-                    self.debugger.message("INFO", "   lastWordExclude: {}".format(word))
+            for wordIndex in wordIndices:
+                if wordIndex in rhymeGroups[rhymeGroup]:
+                    self.debugger.message("INFO", "   Used as a {}".format(wordIndex))
+                for lineOption in wordIndices[wordIndex]["options"]:
+                    if wordIndex + lineOption in rhymeGroups[rhymeGroup]:
+                        self.debugger.message("INFO", "   {}: {}".
+                                              format(wordIndex + lineOption,
+                                                     rhymeGroups[rhymeGroup][wordIndex + lineOption]))
 
         # if lineDef[wordIndices[wordIndex][1]]: # If there is a syllable count restriction for this word
         #     if not wordIndex+"Syllables" in rhymeGroups[lineDef[wordIndices[wordIndex][0]]]:
