@@ -34,44 +34,171 @@ class song:
         # so I need to know everything about what will eventually be pulled from the chosen pool.
 
         # Helper dict to associate the word specifications with the songDef dict index
-        # Values are a list:
-        # [0] = location of rhymeGroup identifier like "A", "B" ... in lineDef
-        # [1] = location of syllable requirements ... in lineDef
-        # [2] = location of include-only lists ... in lineDef
-        # [3] = location of exclude lists ... in lineDef
         wordIndices = {"firstWord": {"rhymeGroup": 0, "options": { "Syllables": 1, "Exclude": 2, "IncludeOnly": 3 } } ,
                        "lastWord" : {"rhymeGroup": 7, "options": { "Syllables": 8, "Exclude": 9, "IncludeOnly": 10 } } }
 
+        # ** BACKREFERENCES OVERRIDE EVERYTHING **
+        #  If a songdef line has a firstword/fullline/and-or-lastword backreference, exclude that firstword/fullline/etc
+        #    portion from the top level song rhymeGroup definition.
+        # [4] = firstword backref index
+        # [6] = fullline backref index
+        # [11] = lastword backref index
+        backRefIndices = {"firstWord": 4, "fullLine": 6, "lastWord": 11 }
+
+        # Helper dict to associate full line specifications with the songDef dict index
+        fullLineIndices = {"Syllables": 5 }
+
+        self.debugger.message("INFO", "Preprocessing rhymeGroup definitions")
+
         for lineDef in self.songDef:
-            for wordIndex in wordIndices: # loop through "firstWord" then "lastWord"
-                if lineDef[wordIndices[wordIndex]["rhymeGroup"]]: # If there is a rhymeGroup Identifier found like "A"
-                    # This line has a rhymeGroup in either the first or lastWord position
-                    if lineDef[wordIndices[wordIndex]["rhymeGroup"]] not in rhymeGroups:
-                        # and we haven't encountered it before, so initialize a sub-dict
-                        rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]] = {}
-                    # record the position it's been found in like 'firstWord':True
-                    rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]][wordIndex] = True
+            # Only examine this line if it is NOT a backreference to another line
+            if not lineDef[backRefIndices["fullLine"]]:
 
-                    for lineOption in wordIndices[wordIndex]["options"]:
-                        # loop through each of the line options pertaining to a firstWord or lastWord
-                        if lineDef[wordIndices[wordIndex]["options"][lineOption]]:
-                            # If one of the options has been defined for this line...
-                            if not wordIndex + lineOption in rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]]:
-                                # And it's the first time we've encountered this rhymeGroup w/ such a restriction
-                                # Initialize a list to hold the restriction
-                                rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]][wordIndex + lineOption] = []
-                            # Record this restriction for this position
+                for wordIndex in wordIndices: # loop through "firstWord" then "lastWord"
 
-                            rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]][wordIndex + lineOption].\
-                              append(lineDef[wordIndices[wordIndex]["options"][lineOption]])
+                    # Only examine this word if it is NOT a backreference to another word
+                    if not lineDef[backRefIndices[wordIndex]]:
+
+                        # If there is a rhymeGroup Identifier for this word such as "A"
+                        # then this line has a rhymeGroup defined in either the first or lastWord position
+                        if lineDef[wordIndices[wordIndex]["rhymeGroup"]]:
+
+                            # If we haven't encountered it before, initialize a sub-dict to store the rhymegroup
+                            # options
+                            if lineDef[wordIndices[wordIndex]["rhymeGroup"]] not in rhymeGroups:
+                                rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]] = {}
+
+                            # Record the number of times this rhymeGroup has been found in this position e.g.
+                            #   'firstWord':3
+                            if not wordIndex in rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]]:
+                                rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]][wordIndex] = 1
+                            else:
+                                rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]][wordIndex] += 1
+
+                            if (wordIndex == "lastWord" and "firstWord" in
+                                rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]]):
+                                # This rhymegroup is implicated in both first and lastword positions
+                                # Denote that this is a dual-position rhymegroup
+                                rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]] \
+                                    ["dualPosition"] = True
+
+                            if lineDef[fullLineIndices["Syllables"]]:
+                                # If fullLine syllables are specified for this rhymeGroup,
+
+                                if not "fullLineSyllables" in rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]]:
+                                    # and we haven't encountered this option before to store it,
+                                    # initialize a dict to hold what we've seen
+                                    rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]]["fullLineSyllables"] = {}
+
+                                # Add this syllable count to the dict
+                                rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]]["fullLineSyllables"]\
+                                    [lineDef[fullLineIndices["Syllables"]]] = True
+
+                            # loop through each of the line options pertaining to a firstWord or lastWord
+                            for lineOption in wordIndices[wordIndex]["options"]:
+
+                                # If one of the options has been defined for this line...
+                                if lineDef[wordIndices[wordIndex]["options"][lineOption]]:
+
+                                    # And it's the first time we've encountered this rhymeGroup w/ such an option
+                                    # Initialize a dict to hold the option
+                                    if not wordIndex + lineOption in \
+                                           rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]]:
+                                        rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]] \
+                                            [wordIndex + lineOption] = {}
+
+                                    # Record this option for this position.  Using dict keys for auto-dedupe
+                                    if type(lineDef[wordIndices[wordIndex]["options"][lineOption]]) == list:
+                                        for optionValue in lineDef[wordIndices[wordIndex]["options"][lineOption]]:
+                                            rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]]\
+                                                [wordIndex + lineOption][optionValue] = True
+                                    else:
+                                        rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]]\
+                                        [wordIndex + lineOption]\
+                                            [lineDef[wordIndices[wordIndex]["options"][lineOption]]] = True
 
         self.debugger.message("INFO", rhymeGroups)
+
+        rhymeGroupTempl = "SELECT \
+                             COUNT(`tblLines`.`id`) as totalLines, \
+                             `firstRhymeWords`.`rhymePool` as firstWordRhymeGroup, \
+                             `lastRhymeWords`.`rhymePool` as lastWordRhymeGroup \
+                           FROM `tblLines` \
+                           INNER JOIN \
+                             `tblRhymeWords` lastRhymeWords ON `tblLines`.`lastWord` = `lastRhymeWords`.`word` \
+                           INNER JOIN \
+                             `tblRhymeWords` firstRhymeWords ON `tblLines`.`firstWord` = `firstRhymeWords`.`word` \
+                           WHERE ( \
+                             (`tblLines`.`syllables` >= 9) \
+                             AND \
+                             (`tblLines`.`syllables` <= 12) \
+                             AND \
+                             (`tblLines`.`firstWord` != `tblLines`.`lastWord`) \
+                           )  \
+                           GROUP BY `firstWordRhymeGroup`, `lastWordRhymeGroup` \
+                           HAVING ( \
+                             (COUNT(tblLines.id) > 3) \
+                          ) \
+                          ORDER BY RAND() \
+                          LIMIT 1;"
+
+
+        for rhymeGroup in rhymeGroups:
+            # For each rhymegroup, start a new query to pick a rhymePool
+            rhymeGroupQuery = "SELECT COUNT(`tblLines`.`id`) as totalLines, "
+
+            self.debugger.message("QRYBLD", "Rhymegroup {}:".format(rhymeGroup))
+
+            for wordIndex in wordIndices:
+                # SELECT COLUMNS FROM tblRhymeWords
+                # Loop through positions firstWord, lastWord..
+                if wordIndex in rhymeGroups[rhymeGroup]:
+                    # If it's been used in this position, SELECT that position within the query
+                    self.debugger.message("QRYBLD", "    Adding SELECT for {} seen {} times".format(wordIndex,
+                                                                                    rhymeGroups[rhymeGroup][wordIndex]))
+                    if (("dualPosition" in rhymeGroups[rhymeGroup]) and (wordIndex == "lastWord")):
+                        # If it's been used in BOTH positions, insert the comma between the firstWord
+                        rhymeGroupQuery += ", "
+                    rhymeGroupQuery += "`{}Words`.`rhymePool` as {}RhymeGroup ".format(wordIndex, wordIndex)
+
+            # Always selecting from tblLines because need to filter by how many actual lines we have later on
+            rhymeGroupQuery += "FROM `tblLines` "
+
+            for wordIndex in wordIndices:
+                # INNER JOINING tblRhymeWords
+                # Loop through positions firstWord, lastWord..
+                if wordIndex in rhymeGroups[rhymeGroup]:
+                    # If it's been used in this position, INNER JOIN that position within the query
+                    self.debugger.message("QRYBLD", "    Adding INNER JOIN for {} seen {} times".format(wordIndex,
+                                                                                    rhymeGroups[rhymeGroup][wordIndex]))
+                    rhymeGroupQuery += "INNER JOIN `tblRhymeWords` {}Words ON `tblLines`.`{}` = `{}Words`.`word` ".\
+                        format(wordIndex, wordIndex, wordIndex)
+
+            # Need a WHERE clause if:
+            #   There is a fullLine syllable count specficied,
+            #   There is a firstWord and/or lastWord restriction specified,
+            #   There is a firstWord and/or lastWord syllable count specified,
+            #   The rhymeGroup is used in both the firstWord and lastWord position, in which case firstWord != lastWord
+
+            # if (
+            #         (rhymeGroups[rhymeGroup])
+            # )
+
+            self.debugger.message("QRYBLD", "Query: {}".format(rhymeGroupQuery))
+            #     for lineOption in wordIndices[wordIndex]["options"]:
+            #         if wordIndex + lineOption in rhymeGroups[rhymeGroup]:
+            #             self.debugger.message("INFO", "   {}: {}".
+            #                                   format(wordIndex + lineOption,
+            #                                          rhymeGroups[rhymeGroup][wordIndex + lineOption]))
+
+
 
         for rhymeGroup in rhymeGroups:
             self.debugger.message("INFO", "Rhymegroup {}:".format(rhymeGroup))
             for wordIndex in wordIndices:
                 if wordIndex in rhymeGroups[rhymeGroup]:
-                    self.debugger.message("INFO", "   Used as a {}".format(wordIndex))
+                    self.debugger.message("INFO", "   Used as a {} {} times".format(wordIndex,
+                                                                                    rhymeGroups[rhymeGroup][wordIndex]))
                 for lineOption in wordIndices[wordIndex]["options"]:
                     if wordIndex + lineOption in rhymeGroups[rhymeGroup]:
                         self.debugger.message("INFO", "   {}: {}".
@@ -193,7 +320,7 @@ if __name__ == "__main__":
                 [None, None, None, None,   1,    6,    None, "C", None, None, None, None],
                 [None, None, None, None,   None, None, 5,   None, None, None, None, None],
                 [None, 3,    None, None,   None, 6,    None, "D", None, None, None, None],
-                [None, None, None, None,   None, 7,    None, "D", None, None, None, None],
+                [None, None, None, None,   None, None, None, "D", None, None, None, None],
                 [None, None, None, None,   None, 2,    None, "E", None, None, None, None],
                 [None, None, None, None,   None, 3,    None, "E", None, None, None, None],
                 [None, None, None, None,   None, 9,    None, "D", None, None, None, None],
@@ -207,18 +334,18 @@ if __name__ == "__main__":
     #             "linedef" : [ [line 0 def], [line 1 def], [line 2 def], [line 3 def], ... ] }
 
     # LineDef =
-    # [ ("FirstWord RhymeGroup" or None) ex "A",                   -> Lines w/same group have rhyming First Words
-    #   (FirstWord SyllableCt or None) ex 3,                       -> Syllable count of first word in this line
-    #   (["FirstWord ExcludeList"] or None) ex ["but", "or"],      -> Exclude lines with these First Words
-    #   (["FirstWord IncludeOnlyList"] or None) ex ["that", "my"], -> Only choose a line with these First Words
-    #   (FirstWord BackReference Index or None) ex 0,              -> Override and simply repeat the word from index n
-    #   (FullLine SyllableCt or None) ex 9,                        -> Syllable count of the whole line
-    #   (FullLine BackReference Index or None) ex 0,               -> Override and simply repeat the line from index n
-    #   ("LastWord RhymeGroup" or None) ex "A",                    -> Lines w/same group have rhyming Last Words
-    #   (LastWord SyllableCt or None) ex 3,                        -> Syllable count of last word in this line
-    #   (["LastWord ExcludeList"] or None) ex ["years", "his"],    -> Exclude lines with these Last Words
-    #   (["LastWord IncludeOnlyList"] or None) ex ["lot", "her"],  -> Only choose a line with these Last Words
-    #   (LastWord BackReference Index or None) ex 0 ]              -> Override and simply repeat the word from index n
+    #0[ ("FirstWord RhymeGroup" or None) ex "A",                   -> Lines w/same group have rhyming First Words
+    #1  (FirstWord SyllableCt or None) ex 3,                       -> Syllable count of first word in this line
+    #2  (["FirstWord ExcludeList"] or None) ex ["but", "or"],      -> Exclude lines with these First Words
+    #3  (["FirstWord IncludeOnlyList"] or None) ex ["that", "my"], -> Only choose a line with these First Words
+    #4  (FirstWord BackReference Index or None) ex 0,              -> Override and simply repeat the word from index n
+    #5  (FullLine SyllableCt or None) ex 9,                        -> Syllable count of the whole line
+    #6  (FullLine BackReference Index or None) ex 0,               -> Override and simply repeat the line from index n
+    #7  ("LastWord RhymeGroup" or None) ex "A",                    -> Lines w/same group have rhyming Last Words
+    #8  (LastWord SyllableCt or None) ex 3,                        -> Syllable count of last word in this line
+    #9  (["LastWord ExcludeList"] or None) ex ["years", "his"],    -> Exclude lines with these Last Words
+    #10 (["LastWord IncludeOnlyList"] or None) ex ["lot", "her"],  -> Only choose a line with these Last Words
+    #11 (LastWord BackReference Index or None) ex 0 ]              -> Override and simply repeat the word from index n
 
     #                                         FirstWord                       FullLine    LastWord
     #                                         RG    SC    Exl   Inc     BR    SC    BR    RG   SC    Exl   Inc   BR
