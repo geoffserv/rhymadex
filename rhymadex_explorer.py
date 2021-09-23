@@ -25,7 +25,7 @@ class song:
         #   and the candidatePoolMultiplier is 2,
         #   only consider candidate rhymePools who have at least 3 * 2 = 6 or more available lines to select from.
         # The result will be doubled again if there are any rhyme groups occuring in dual-position, both first and last
-        self.candidatePoolMultiplier = 2
+        self.candidatePoolMultiplier = 4
 
         self.songDef = songDef
         self.songNumLines = len(self.songDef)
@@ -367,91 +367,156 @@ class song:
         # NOT IN previously selected line ids ..
         # Run the query
         # Store and display the resulting line and line id
-        # TODO Alright go
 
         song = []
 
+        # As results come back, if a line has a defined firstWord rhymeGroup or lastWord rhymeGroup,
+        # Exclude those chosen words from future queries.  Store them here:
+        pastFirstWords = {}
+        pastLastWords = {}
+
         for lineDef in self.songDef:
 
-            self.debugger.message("QRYBLD", "Building lineDef: {}".format(lineDef))
+            if not lineDef[backRefIndices["fullLine"]]:
 
-            songQuery = "SELECT `tblLines`.`id`, `tblLines`.`line` "
+                self.debugger.message("QRYBLD", "Building lineDef: {}".format(lineDef))
 
-            # If we got a rhymeGroup in firstWord and/or lastWord, select the INNER JOINed rhymePool columns
-            for wordIndex in wordIndices:
-                if lineDef[wordIndices[wordIndex]["rhymeGroup"]]:
-                    self.debugger.message("QRYBLD", ".. Adding SELECT for {} rhymeGroup of {}".format(wordIndex,
-                                                                         lineDef[wordIndices[wordIndex]["rhymeGroup"]]))
-                    songQuery += ", `{}Words`.`rhymePool` ".format(wordIndex)
+                songQuery = "SELECT `tblLines`.`id`, `tblLines`.`line`, `tblLines`.`firstWord`, `tblLines`.`lastWord` "
 
-            songQuery += "FROM `tblLines` "
-
-            # If we got a rhymeGroup in firstWord and/or lastWord, INNER JOIN the rhymeWords table/s
-            for wordIndex in wordIndices:
-                if lineDef[wordIndices[wordIndex]["rhymeGroup"]]:
-                    self.debugger.message("QRYBLD", ".. Adding INNER JOIN for {} rhymeGroup of {}".format(wordIndex,
-                                                                         lineDef[wordIndices[wordIndex]["rhymeGroup"]]))
-                    songQuery += "INNER JOIN "
-                    songQuery += "`tblRhymeWords` {}Words ON ".format(wordIndex)
-                    songQuery += "`tblLines`.`{}` = `{}Words`.`word` ".format(wordIndex, wordIndex)
-
-            # Need a WHERE clause if:
-            #   There is a fullLine syllable count specficied,
-            #   There is a firstWord and/or lastWord rhyme Group specified
-            #   TODO There is a firstWord and/or lastWord restriction specified,
-            #   TODO There is a firstWord and/or lastWord syllable count specified,
-            #   A rhymeGroup is used in both the firstWord and lastWord position, in which case firstWord != lastWord,
-            #   TODO There are past line Ids we should exclude
-
-            if (
-                (lineDef[fullLineIndices["Syllables"]]) or
-                (lineDef[wordIndices["firstWord"]["rhymeGroup"]]) or
-                (lineDef[wordIndices["lastWord"]["rhymeGroup"]]) or
-                (lineDef[wordIndices["firstWord"]["rhymeGroup"]])
-                ):
-                songQuery += "WHERE ( "
-
-                firstWhereClause = True # track for the "AND"s ...
-
-                # Add WHERE clause for full line syllable count, if it's defined:
-                if (lineDef[fullLineIndices["Syllables"]]):
-                    self.debugger.message("QRYBLD", ".. Adding WHERE full line syllable count {} +- {}".format(
-                                                            lineDef[fullLineIndices["Syllables"]],self.syllablePadding))
-                    songQuery += "( (`tblLines`.`syllables` >= {}) AND (`tblLines`.`syllables` <= {}) ) ".\
-                                               format(int(lineDef[fullLineIndices["Syllables"]]) - self.syllablePadding,
-                                                      int(lineDef[fullLineIndices["Syllables"]]) + self.syllablePadding)
-                    firstWhereClause = False # Need an AND for the next WHERE clause, if there is one..
-
-                # Add WHERE clause/s for firstWord and/or lastWord rhymeGroup/rhymePoolId, if it's defined:
+                # If we got a rhymeGroup in firstWord and/or lastWord, select the INNER JOINed rhymePool columns
                 for wordIndex in wordIndices:
-                    if (lineDef[wordIndices[wordIndex]["rhymeGroup"]]):
-                        # Loop through firstWord, lastWord..
+                    if lineDef[wordIndices[wordIndex]["rhymeGroup"]]:
+                        self.debugger.message("QRYBLD", ".. Adding SELECT for {} rhymeGroup of {}".format(wordIndex,
+                                                                             lineDef[wordIndices[wordIndex]["rhymeGroup"]]))
+                        songQuery += ", `{}Words`.`rhymePool` ".format(wordIndex)
+
+                songQuery += "FROM `tblLines` "
+
+                # If we got a rhymeGroup in firstWord and/or lastWord, INNER JOIN the rhymeWords table/s
+                for wordIndex in wordIndices:
+                    if lineDef[wordIndices[wordIndex]["rhymeGroup"]]:
+                        self.debugger.message("QRYBLD", ".. Adding INNER JOIN for {} rhymeGroup of {}".format(wordIndex,
+                                                                             lineDef[wordIndices[wordIndex]["rhymeGroup"]]))
+                        songQuery += "INNER JOIN "
+                        songQuery += "`tblRhymeWords` {}Words ON ".format(wordIndex)
+                        songQuery += "`tblLines`.`{}` = `{}Words`.`word` ".format(wordIndex, wordIndex)
+
+                self.debugger.message("INFO", "pastFirstWords: {}".format(pastFirstWords))
+                self.debugger.message("INFO", "pastLastWords: {}".format(pastLastWords))
+
+                # Need a WHERE clause if:
+                #   There is a fullLine syllable count specficied,
+                #   There is a firstWord and/or lastWord rhyme Group specified
+                #   TODO There is a firstWord and/or lastWord restriction specified,
+                #   TODO There is a firstWord and/or lastWord syllable count specified,
+                #   TODO A rhymeGroup is used in both the firstWord and lastWord position, when firstWord != lastWord,
+                #   There are past firstWord/lastWords we should exclude
+
+                if (
+                    (lineDef[fullLineIndices["Syllables"]]) or
+                    (lineDef[wordIndices["firstWord"]["rhymeGroup"]]) or
+                    (lineDef[wordIndices["lastWord"]["rhymeGroup"]]) or
+                    (lineDef[wordIndices["firstWord"]["rhymeGroup"]]) or
+                    (pastFirstWords) or
+                    (pastLastWords)
+                    ):
+                    songQuery += "WHERE ( "
+
+                    firstWhereClause = True # track for the "AND"s ...
+
+                    # Add WHERE clause for full line syllable count, if it's defined:
+                    if (lineDef[fullLineIndices["Syllables"]]):
+                        self.debugger.message("QRYBLD", ".. Adding WHERE full line syllable count {} +- {}".format(
+                                                                lineDef[fullLineIndices["Syllables"]],self.syllablePadding))
+                        songQuery += "( (`tblLines`.`syllables` >= {}) AND (`tblLines`.`syllables` <= {}) ) ".\
+                                                   format(int(lineDef[fullLineIndices["Syllables"]]) - self.syllablePadding,
+                                                          int(lineDef[fullLineIndices["Syllables"]]) + self.syllablePadding)
+                        firstWhereClause = False # Need an AND for the next WHERE clause, if there is one..
+
+                    # Add WHERE clause/s for firstWord and/or lastWord rhymeGroup/rhymePoolId, if it's defined:
+                    for wordIndex in wordIndices:
+                        if (lineDef[wordIndices[wordIndex]["rhymeGroup"]]):
+                            # Loop through firstWord, lastWord..
+                            if not firstWhereClause:
+                                songQuery += "AND "
+                            else:
+                                firstWhereClause = False
+
+                            self.debugger.message("QRYBLD", ".. wordIndex: {} rhymeGroup defined".format(wordIndex))
+                            self.debugger.message("QRYBLD", ".. lineDef[{}]: {}".format(
+                                       wordIndices[wordIndex]["rhymeGroup"], lineDef[wordIndices[wordIndex]["rhymeGroup"]]))
+                            self.debugger.message("QRYBLD", ".. rhymeGroups[lineDef[{}]][\"rhymePool\"]: {}".format(
+                                                                                       wordIndices[wordIndex]["rhymeGroup"],
+                                                   rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]]["rhymePool"]))
+                            self.debugger.message("QRYBLD", ".. Adding WHERE for {} rhymePool {}".format(wordIndex,
+                                                   rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]]["rhymePool"]))
+                            songQuery += "({}Words.rhymePool = {}) ".format(wordIndex,
+                                                    rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]]["rhymePool"])
+
+                    if (pastFirstWords):
                         if not firstWhereClause:
                             songQuery += "AND "
                         else:
                             firstWhereClause = False
 
-                        self.debugger.message("QRYBLD", ".. wordIndex: {} rhymeGroup defined".format(wordIndex))
-                        self.debugger.message("QRYBLD", ".. lineDef[{}]: {}".format(
-                                   wordIndices[wordIndex]["rhymeGroup"], lineDef[wordIndices[wordIndex]["rhymeGroup"]]))
-                        self.debugger.message("QRYBLD", ".. rhymeGroups[lineDef[{}]][\"rhymePool\"]: {}".format(
-                                                                                   wordIndices[wordIndex]["rhymeGroup"],
-                                               rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]]["rhymePool"]))
-                        self.debugger.message("QRYBLD", ".. Adding WHERE for {} rhymePool {}".format(wordIndex,
-                                               rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]]["rhymePool"]))
-                        songQuery += "({}Words.rhymePool = {}) ".format(wordIndex,
-                                                rhymeGroups[lineDef[wordIndices[wordIndex]["rhymeGroup"]]]["rhymePool"])
+                        songQuery += "(`tblLines`.`firstWord` NOT IN ( "
+                        first = True
+                        for firstWord in pastFirstWords:
+                            if not first:
+                                songQuery += ", "
+                            else:
+                                first = False
+                            songQuery += "'{}' ".format(firstWord)
+                        songQuery += ") " # END of NOT IN group
+                        songQuery += ") " # END of WHERE Clause
 
-                songQuery += ") " # END OF WHERE
+                    if (pastLastWords):
+                        if not firstWhereClause:
+                            songQuery += "AND "
+                        else:
+                            firstWhereClause = False
 
-            # Final query options
-            # Random ORDERing and LIMIT
-            songQuery += "ORDER BY RAND() LIMIT 1;"
+                        songQuery += "(`tblLines`.`lastWord` NOT IN ( "
+                        first = True
+                        for lastWord in pastLastWords:
+                            if not first:
+                                songQuery += ", "
+                            else:
+                                first = False
+                            songQuery += "'{}' ".format(lastWord)
+                        songQuery += ") "  # END of NOT IN group
+                        songQuery += ") "  # END of WHERE Clause
 
-            self.debugger.message("QRYBLD", ".. QUERY: {}".format(songQuery))
+                    songQuery += ") " # END OF WHERE
 
-            # Execute the query and store the result
-            songLine = self.rhymadexDB.query(songQuery).fetchall()[0]
+                # Final query options
+                # Random ORDERing and LIMIT
+                songQuery += "ORDER BY RAND() LIMIT 1;"
+
+                self.debugger.message("QRYBLD", ".. QUERY: {}".format(songQuery))
+
+                # Execute the query and store the result
+                songLine = self.rhymadexDB.query(songQuery).fetchall()
+                if (len(songLine) == 0):
+                    # Missed on this line selection query.  Too many restrictions to find a working line.
+                    self.debugger.message("INFO", "No lines returned for this line selection query.")
+                    sys.exit("No viable line found matching this definition.  Exiting.")
+                else:
+                    songLine = songLine[0]
+                    # Add returned firstWord/lastWords associated with a rhymeGroup to the future exclude list
+                    if lineDef[wordIndices["firstWord"]["rhymeGroup"]]:
+                        pastFirstWords[songLine[2]] = True
+                    if lineDef[wordIndices["lastWord"]["rhymeGroup"]]:
+                        pastLastWords[songLine[3]] = True
+
+            else: #The songLine has a fullLine Backreference
+                if (song[lineDef[backRefIndices["fullLine"]]]):
+                    songLine = song[lineDef[backRefIndices["fullLine"]]]
+                else:
+                    # Invalid backreference.  there's nothing there
+                    self.debugger.message("INFO", "Invalid backreference for fullLine id {}".format(
+                                                                                   lineDef[backRefIndices["fullLine"]]))
+                    sys.exit("Invalid fullLine backreference.  Exiting.")
 
             self.debugger.message("INFO", "Song Line: {}".format(songLine))
             song.append(songLine)
