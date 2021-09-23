@@ -11,10 +11,21 @@ class song:
         self.debugger = debugger()
         self.rhymadexDB = rhymadexMariaDB(self.debugger)
 
+        # Quality of selection settings
+
         # Consider candidates which are plus-or-minus this many syllables per line
         # The syllable estimator is inaccurate, and good option to keep the pipeline
         # a bit wider while querying for candidate lines
+        # The lower this is, candidate selection will be more accurate but more restricting
         self.syllablePadding = 1
+
+        # Only consider rhymePools resulting in:
+        #   integer of (the number of rhyme group occurances in the song definition) * candidatePoolMultiplier
+        # For example, if the rhyme group "A" occurs at the end of 3 lines in the song defintion,
+        #   and the candidatePoolMultiplier is 2,
+        #   only consider candidate rhymePools who have at least 3 * 2 = 6 or more available lines to select from.
+        # The result will be doubled again if there are any rhyme groups occuring in dual-position, both first and last
+        self.candidatePoolMultiplier = 2
 
         self.songDef = songDef
         self.songNumLines = len(self.songDef)
@@ -119,35 +130,11 @@ class song:
 
         self.debugger.message("INFO", rhymeGroups)
 
-        rhymeGroupTempl = "SELECT \
-                             COUNT(`tblLines`.`id`) as totalLines, \
-                             `firstRhymeWords`.`rhymePool` as firstWordRhymeGroup, \
-                             `lastRhymeWords`.`rhymePool` as lastWordRhymeGroup \
-                           FROM `tblLines` \
-                           INNER JOIN \
-                             `tblRhymeWords` lastRhymeWords ON `tblLines`.`lastWord` = `lastRhymeWords`.`word` \
-                           INNER JOIN \
-                             `tblRhymeWords` firstRhymeWords ON `tblLines`.`firstWord` = `firstRhymeWords`.`word` \
-                           WHERE ( \
-                             (`tblLines`.`syllables` >= 9) \
-                             AND \
-                             (`tblLines`.`syllables` <= 12) \
-                             AND \
-                             (`tblLines`.`firstWord` != `tblLines`.`lastWord`) \
-                           )  \
-                           GROUP BY `firstWordRhymeGroup`, `lastWordRhymeGroup` \
-                           HAVING ( \
-                             (COUNT(tblLines.id) > 3) \
-                          ) \
-                          ORDER BY RAND() \
-                          LIMIT 1;"
-
-
         for rhymeGroup in rhymeGroups:
             # For each rhymegroup, start a new query to pick a rhymePool
             rhymeGroupQuery = "SELECT COUNT(`tblLines`.`id`) as totalLines, "
 
-            self.debugger.message("QRYBLD", "Rhymegroup {}:".format(rhymeGroup))
+            self.debugger.message("QRYBLD", "rhymeGroup: {}".format(rhymeGroup))
 
             for wordIndex in wordIndices:
                 # SELECT COLUMNS FROM tblRhymeWords
@@ -174,35 +161,139 @@ class song:
                     rhymeGroupQuery += "INNER JOIN `tblRhymeWords` {}Words ON `tblLines`.`{}` = `{}Words`.`word` ".\
                         format(wordIndex, wordIndex, wordIndex)
 
+            pastRhymePoolIds = {}
+
+            # Search for any prior selected tblRhymePool IDs.  They should be
+            # excluded from all subsequent picks
+            for searchRhymeGroup in rhymeGroups:
+                if "rhymePool" in rhymeGroups[searchRhymeGroup]:
+                    pastRhymePoolIds[rhymeGroups[searchRhymeGroup]["rhymePool"]] = True
+
+            if pastRhymePoolIds:
+                self.debugger.message("QRYBLD", "    pastRhymePoolIds: {}".format(pastRhymePoolIds))
+
             # Need a WHERE clause if:
             #   There is a fullLine syllable count specficied,
             #   There is a firstWord and/or lastWord restriction specified,
             #   There is a firstWord and/or lastWord syllable count specified,
-            #   The rhymeGroup is used in both the firstWord and lastWord position, in which case firstWord != lastWord
+            #   The rhymeGroup is used in both the firstWord and lastWord position, in which case firstWord != lastWord,
+            #   THere are past Rhyme Pool Ids we should exclude
 
-            # if (
-            #         (rhymeGroups[rhymeGroup])
-            # )
+            if (
+                ("fullLineSyllables" in rhymeGroups[rhymeGroup]) or
+                ("firstWordIncludeOnly" in rhymeGroups[rhymeGroup]) or
+                ("lastWordIncludeOnly" in rhymeGroups[rhymeGroup]) or
+                ("dualPosition" in rhymeGroups[rhymeGroup]) or
+                (pastRhymePoolIds)
+                ):
+                rhymeGroupQuery += "WHERE ( "
 
-            self.debugger.message("QRYBLD", "Query: {}".format(rhymeGroupQuery))
-            #     for lineOption in wordIndices[wordIndex]["options"]:
-            #         if wordIndex + lineOption in rhymeGroups[rhymeGroup]:
-            #             self.debugger.message("INFO", "   {}: {}".
-            #                                   format(wordIndex + lineOption,
-            #                                          rhymeGroups[rhymeGroup][wordIndex + lineOption]))
+                whereNextAnd = False # track for the "AND"s ..
 
+                # Add full line syllable count restrictions to the query
+                if ("fullLineSyllables" in rhymeGroups[rhymeGroup]):
+                    rhymeGroupQuery += "( " # Open group for syllable count restrictions ((low) AND (high)) OR ((low)..
+                    first = True # track for the "OR"s ..
+                    for syllable in rhymeGroups[rhymeGroup]["fullLineSyllables"]:
+                        if not first:
+                            rhymeGroupQuery += "OR "
+                        else:
+                            first = False
 
+                        rhymeGroupQuery += "( (`tblLines`.`syllables` >= {}) AND (`tblLines`.`syllables` <= {}) ) ".\
+                                            format(int(syllable) - self.syllablePadding,
+                                                   int(syllable) + self.syllablePadding)
+
+                    whereNextAnd = True # We need an AND for the next WHERE clause, if there is one..
+                    rhymeGroupQuery += ") "
+
+                if ("dualPosition" in rhymeGroups[rhymeGroup]):
+                    # The rhymeGroup appears in both firstWord and lastWord positions, possibly even
+                    # in the same line.  So set a query WHERE condition that the firstWord and lastWord cannot
+                    # be the same
+                    if whereNextAnd:
+                        rhymeGroupQuery += "AND "
+                    else:
+                        whereNextAnd = True
+                    rhymeGroupQuery += "(`tblLines`.`firstWord` != `tblLines`.`lastWord`) "
+
+                if (pastRhymePoolIds):
+                    # Need to exclude past chosen rhymePoolIds or else its possible to select
+                    #   the same pool for multiple rhymeGroups.
+                    # TODO do that here
+
+                # TODO if ("firstWordIncludeOnly" in rhymeGroups[rhymeGroup]):
+                # Implement later
+
+                # TODO if ("lastWordIncludeOnly" in rhymeGroups[rhymeGroup]):
+                # Implement later
+
+                rhymeGroupQuery += ") " # end of query WHERE
+
+            # GROUP BY
+            # Needs to be one or both of firstWord/lastWord
+            rhymeGroupQuery += "GROUP BY "
+            first = True # To track comma usage
+            for wordIndex in wordIndices:
+                if wordIndex in rhymeGroups[rhymeGroup]:
+                    if not first:
+                        rhymeGroupQuery += ", "
+                    else:
+                        first = False
+                    rhymeGroupQuery += "`{}RhymeGroup` ".format(wordIndex)
+
+            # HAVING
+            # At minimum, will be HAVING a minimum number of available lines that is 2x the
+            # number of times the rhymegroup is referenced in the songDef
+            rhymeGroupQuery += "HAVING ( "
+
+            # Find the larger of either firstWord or lastWord occurance count,
+            # and multiply by 2.  this is how many candidates that the pool we
+            # choose should have at minimum
+            totLines = 0
+            for wordIndex in wordIndices:
+                if (wordIndex in rhymeGroups[rhymeGroup]):
+                    if (rhymeGroups[rhymeGroup][wordIndex] > totLines):
+                        totLines = rhymeGroups[rhymeGroup][wordIndex]
+                        self.debugger.message("QRYBLD", "    Position {} seen {} times, totLines: {}".
+                                              format(wordIndex, rhymeGroups[rhymeGroup][wordIndex], totLines))
+            totLines = int(totLines * self.candidatePoolMultiplier)
+            if ("dualPosition" in rhymeGroups[rhymeGroup]):
+                totLines = totLines * 2
+
+            rhymeGroupQuery += "(totalLines >= {}) ".format(totLines)
+
+            if ("dualPosition" in rhymeGroups[rhymeGroup]):
+                rhymeGroupQuery += "AND (firstWordRhymeGroup = lastWordRhymeGroup) "
+
+            rhymeGroupQuery += ") " # End of HAVING
+
+            rhymeGroupQuery += "ORDER BY RAND() LIMIT 1;"
+
+            self.debugger.message("QRYBLD", "    QUERY: {}".format(rhymeGroupQuery))
+
+            # Query's ready for rhymePool selection for each rhymeGroup
+            # First result, second column of the SELECT will be the assigned rhymePoolId
+            rhymePoolId = self.rhymadexDB.query(rhymeGroupQuery).fetchall()[0][1]
+
+            self.debugger.message("INFO", "Assigned rhymePoolId: {}".format(rhymePoolId))
+            rhymeGroups[rhymeGroup]["rhymePool"] = rhymePoolId
 
         for rhymeGroup in rhymeGroups:
             self.debugger.message("INFO", "Rhymegroup {}:".format(rhymeGroup))
+            if "rhymePool" in rhymeGroups[rhymeGroup]:
+                self.debugger.message("INFO", "   rhymePool: {}".format(
+                                                                        rhymeGroups[rhymeGroup]["rhymePool"]))
+            if "fullLineSyllables" in rhymeGroups[rhymeGroup]:
+                self.debugger.message("INFO", "   fullLineSyllables: {}".format(
+                                                                         rhymeGroups[rhymeGroup]["fullLineSyllables"]))
             for wordIndex in wordIndices:
                 if wordIndex in rhymeGroups[rhymeGroup]:
                     self.debugger.message("INFO", "   Used as a {} {} times".format(wordIndex,
                                                                                     rhymeGroups[rhymeGroup][wordIndex]))
                 for lineOption in wordIndices[wordIndex]["options"]:
                     if wordIndex + lineOption in rhymeGroups[rhymeGroup]:
-                        self.debugger.message("INFO", "   {}: {}".
-                                              format(wordIndex + lineOption,
+                        self.debugger.message("INFO", "   {}: {}".format(wordIndex + lineOption,
                                                      rhymeGroups[rhymeGroup][wordIndex + lineOption]))
 
         # if lineDef[wordIndices[wordIndex][1]]: # If there is a syllable count restriction for this word
