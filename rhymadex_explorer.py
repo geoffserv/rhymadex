@@ -25,7 +25,10 @@ class song:
         #   and the candidatePoolMultiplier is 2,
         #   only consider candidate rhymePools who have at least 3 * 2 = 6 or more available lines to select from.
         # The result will be doubled again if there are any rhyme groups occuring in dual-position, both first and last
-        self.candidatePoolMultiplier = 20
+        self.candidatePoolMultiplier = 2
+
+        # Grab and store this many candidate pools for each RhymeGroup at once
+        self.rhymeGroupPoolSize = 10
 
         # Song attributes
         # The songDef is a list containing the definition settings for each line of the song
@@ -168,7 +171,7 @@ class song:
 
         for rhymeGroup in self.rhymeGroups:
             # For each rhymegroup, start a new query to pick a rhymePool
-            rhymeGroupQuery = "SELECT COUNT(`tblLines`.`id`) as totalLines, "
+            rhymeGroupQuery = "SELECT COUNT(`tblLines`.`id`) as totalLines "
 
             self.debugger.message("QRYBLD", "Building query for rhymeGroup: {}".format(rhymeGroup))
 
@@ -179,10 +182,28 @@ class song:
                     # If it's been used in this position, SELECT that position within the query
                     self.debugger.message("QRYBLD", ".. Adding SELECT for {} seen {} times".format(wordIndex,
                                                                                self.rhymeGroups[rhymeGroup][wordIndex]))
-                    if (("dualPosition" in self.rhymeGroups[rhymeGroup]) and (wordIndex == "lastWord")):
-                        # If it's been used in BOTH positions, insert the comma between the firstWord
-                        rhymeGroupQuery += ", "
-                    rhymeGroupQuery += "`{}Words`.`rhymePool` as {}RhymeGroup ".format(wordIndex, wordIndex)
+                    rhymeGroupQuery += ", `{}Words`.`rhymePool` as {}RhymeGroup ".format(wordIndex, wordIndex)
+
+            for wordIndex in self.wordIndices:
+                # SELECT DISTINCT counts of firstWords and/or lastWords
+                if wordIndex in self.rhymeGroups[rhymeGroup]:
+                    # If it's been used in this position, SELECT a DISTINCT COUNT within the query
+                    self.debugger.message("QRYBLD", ".. Adding DISTINCT COUNT for {}".format(wordIndex))
+                    rhymeGroupQuery += ", COUNT(DISTINCT(`tblLines`.`{}`)) as distinct{} ".format(wordIndex, wordIndex)
+
+            # Need a SUM CASE in the SELECT if:
+            #   There is a fullLine syllable count list specficied
+            #     This is because we gotta check that a diverse set of options exist in each selected rhymePool
+            #     and can do so at once across an arbitrary set of implied syllable counts, all at once, using
+            #     SUM CASE and then filtering with HAVING
+
+            # Add full line syllable count SELECTions to the query
+            if ("fullLineSyllables" in self.rhymeGroups[rhymeGroup]):
+                for syllable in self.rhymeGroups[rhymeGroup]["fullLineSyllables"]:
+                    rhymeGroupQuery += ", sum(CASE WHEN ( "
+                    rhymeGroupQuery += "(`tblLines`.`syllables` >= {}) AND ".format(int(syllable)-self.syllablePadding)
+                    rhymeGroupQuery += "(`tblLines`.`syllables` <= {}) ) ".format(int(syllable)+self.syllablePadding)
+                    rhymeGroupQuery += "THEN 1 ELSE 0 END ) as syllables{} ".format(syllable)
 
             # Always selecting from tblLines because need to filter by how many actual lines we have later on
             rhymeGroupQuery += "FROM `tblLines` "
@@ -332,14 +353,28 @@ class song:
             if ("dualPosition" in self.rhymeGroups[rhymeGroup]):
                 totLines = totLines * 2
 
-            rhymeGroupQuery += "(totalLines >= {}) ".format(totLines)
+            rhymeGroupQuery += "(totalLines >= {} ) ".format(totLines)
+
+            # Filter minimum distinct firstWord/and-or-lastWords
+            for wordIndex in self.wordIndices:
+                # HAVING DISTINCT counts of firstWords and/or lastWords
+                if wordIndex in self.rhymeGroups[rhymeGroup]:
+                    # If it's been used in this position, HAVING a DISTINCT COUNT within the query
+                    self.debugger.message("QRYBLD", ".. Adding HAVING DISTINCT for {}".format(wordIndex))
+                    rhymeGroupQuery += "AND (distinct{} >= {}) ".format(wordIndex, totLines)
+
+            # Filter minimum syllable count lines available
+                # Add full line syllable count SELECTions to the query
+                if ("fullLineSyllables" in self.rhymeGroups[rhymeGroup]):
+                    for syllable in self.rhymeGroups[rhymeGroup]["fullLineSyllables"]:
+                        rhymeGroupQuery += "AND (syllables{} >= {}) ".format(syllable, totLines)
 
             if ("dualPosition" in self.rhymeGroups[rhymeGroup]):
                 rhymeGroupQuery += "AND (firstWordRhymeGroup = lastWordRhymeGroup) "
 
             rhymeGroupQuery += ") " # End of HAVING
 
-            rhymeGroupQuery += "ORDER BY RAND() LIMIT 1;"
+            rhymeGroupQuery += "ORDER BY RAND() LIMIT {};".format(self.rhymeGroupPoolSize)
 
             self.debugger.message("QRYBLD", ".. QUERY: {}".format(rhymeGroupQuery))
 
