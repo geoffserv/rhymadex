@@ -16,6 +16,7 @@ class debugger:
     def __init__(self):
         self.stats = {}
         self.messages = []
+        self.printEnabled = True
 
     def logStat(self, statistic, increment, value=0):
         if not increment:
@@ -34,20 +35,22 @@ class debugger:
     def message(self, severity, message):
         messageString = "{}- {}".format(severity, message)
         self.messages.append({"message": messageString, "timestamp": time.time()})
-        print(messageString)
+        if self.printEnabled:
+            print(messageString)
 
     def summary(self):
         for stat in self.stats:
             self.message("DEBUG SUMMARY", "{}: {}".format(stat, self.stats[stat]))
-        print("Total Runtime:", self.messages[-1]["timestamp"] - self.messages[0]["timestamp"], "seconds")
+        self.message("DEBUG SUMMARY", "Total Runtime: {} seconds", format((self.messages[-1]["timestamp"] - self.messages[0]["timestamp"])))
 
     def progress(self, processed, total):
-        if ((processed == 1) or (processed % 1000 == 0)):
-            percentComplete = int((processed/total)*100)
-            print("\r", end="")
-            print("PROGRESS- Estimated build progress:", percentComplete, "%", end="")
-        if (processed == total):
-            print(" ... Done.")
+        if self.printEnabled:
+            if ((processed == 1) or (processed % 1000 == 0)):
+                percentComplete = int((processed/total)*100)
+                print("\r", end="")
+                print("PROGRESS- Estimated build progress:", percentComplete, "%", end="")
+            if (processed == total):
+                print(" ... Done.")
 
 class rhymadexMariaDB:
     def __init__(self, debugger, configfile="mariadb.cfg"):
