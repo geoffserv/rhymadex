@@ -8,7 +8,9 @@ from rhymadex_builder import rhymadexMariaDB
 
 class song:
     def __init__(self, songDef):
+
         self.debugger = debugger()
+        self.debugger.printEnabled = False
         self.rhymadexDB = rhymadexMariaDB(self.debugger)
 
         # Quality of selection settings
@@ -69,11 +71,9 @@ class song:
         # to associate with each songDef rhyme group.
         self.rhymeGroups = {}
 
-        self.generateRhymeGroups()
+        self.rhymeGroups = self.generateRhymeGroups(self.songDef)
 
-        self.generateSong()
-
-    def generateRhymeGroups(self):
+    def generateRhymeGroups(self, songDef):
 
         # Need to pre-process the songDef to get some top level facts about each requested rhymeGroup
         # prior to building a query to search for an appropriate rhymePool
@@ -84,7 +84,9 @@ class song:
 
         self.debugger.message("INFO", "Preprocessing rhymeGroup definitions")
 
-        for lineDef in self.songDef:
+        rhymeGroups = {}
+
+        for lineDef in songDef:
             # Only examine this line if it is NOT a backreference to another line
             if not lineDef[self.backRefIndices["fullLine"]]:
 
@@ -99,35 +101,35 @@ class song:
 
                             # If we haven't encountered it before, initialize a sub-dict to store the rhymegroup
                             # options
-                            if lineDef[self.wordIndices[wordIndex]["rhymeGroup"]] not in self.rhymeGroups:
-                                self.rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]] = {}
+                            if lineDef[self.wordIndices[wordIndex]["rhymeGroup"]] not in rhymeGroups:
+                                rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]] = {}
 
                             # Iterate the number of times this rhymeGroup has been found in this position e.g.
                             #   'firstWord':3 .. 4 .. 5 ..
-                            if not wordIndex in self.rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]:
-                                self.rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]][wordIndex] = 1
+                            if not wordIndex in rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]:
+                                rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]][wordIndex] = 1
                             else:
-                                self.rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]][wordIndex] += 1
+                                rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]][wordIndex] += 1
 
                             if (wordIndex == "lastWord" and "firstWord" in
-                                self.rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]):
+                                rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]):
                                 # This rhymegroup is implicated in both first and lastword positions
                                 # Denote that this is a dual-position rhymegroup
-                                self.rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]\
+                                rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]\
                                                                                                  ["dualPosition"] = True
 
                             if lineDef[self.fullLineIndices["Syllables"]]:
                                 # If fullLine syllables are specified for this rhymeGroup,
 
-                                if not "fullLineSyllables" in self.rhymeGroups[lineDef[self.wordIndices[wordIndex]
+                                if not "fullLineSyllables" in rhymeGroups[lineDef[self.wordIndices[wordIndex]
                                                                                                        ["rhymeGroup"]]]:
                                     # and we haven't encountered this option before to store it,
                                     # initialize a dict to hold what we've seen
-                                    self.rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]\
+                                    rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]\
                                                                                               ["fullLineSyllables"] = {}
 
                                 # Add this syllable count to the dict
-                                self.rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]\
+                                rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]\
                                                 ["fullLineSyllables"][lineDef[self.fullLineIndices["Syllables"]]] = True
 
                             # loop through each of the line options pertaining to a firstWord or lastWord
@@ -139,21 +141,21 @@ class song:
                                     # And it's the first time we've encountered this rhymeGroup w/ such an option
                                     # Initialize a dict to hold the option
                                     if not wordIndex + lineOption in \
-                                           self.rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]:
-                                        self.rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]\
+                                           rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]:
+                                        rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]\
                                                                                            [wordIndex + lineOption] = {}
 
                                     # Record this option for this position.  Using dict keys for auto-dedupe
                                     if type(lineDef[self.wordIndices[wordIndex]["options"][lineOption]]) == list:
                                         for optionValue in lineDef[self.wordIndices[wordIndex]["options"][lineOption]]:
-                                            self.rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]\
+                                            rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]\
                                                 [wordIndex + lineOption][optionValue] = True
                                     else:
-                                        self.rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]\
+                                        rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]\
                                         [wordIndex + lineOption]\
                                             [lineDef[self.wordIndices[wordIndex]["options"][lineOption]]] = True
 
-        self.debugger.message("INFO", ".. Processed self.rhymeGroups: {}".format(self.rhymeGroups))
+        self.debugger.message("INFO", ".. Processed rhymeGroups: {}".format(rhymeGroups))
 
         # Build and execute a rhymePoolId selection query
         # The strategy is to INNER JOIN the tblRhymeWords table against the tblLines table
@@ -163,13 +165,13 @@ class song:
         # for each rhymeGroup randomly.
 
         # FIXME This is super slow.  The "Dual Position" situation in which a rhymeGroup is used both
-        # as a firstWord and a lastWord (possibly even in the same line) results in a double INNER JOIN
+        # as a firstWord and a lastWord (possibly even in the same line) results in a double INNER JOIN 🌈 🌈
         # so that it's possible to resolve the tblRhymePools ID for each firstWord and lastWord.
         # Maybe a better strategy is just to store the appropriate tblRhymePools ID as a foreign key in
         # the tblLines table itself.  Then there are no JOINS needed at all.
         # BUT THIS appears to be working and I'm plowing forwards towards a working first version
 
-        for rhymeGroup in self.rhymeGroups:
+        for rhymeGroup in rhymeGroups:
             # For each rhymegroup, start a new query to pick a rhymePool
             rhymeGroupQuery = "SELECT COUNT(`tblLines`.`id`) as totalLines "
 
@@ -178,15 +180,15 @@ class song:
             for wordIndex in self.wordIndices:
                 # SELECT COLUMNS FROM tblRhymeWords
                 # Loop through positions firstWord, lastWord..
-                if wordIndex in self.rhymeGroups[rhymeGroup]:
+                if wordIndex in rhymeGroups[rhymeGroup]:
                     # If it's been used in this position, SELECT that position within the query
                     self.debugger.message("QRYBLD", ".. Adding SELECT for {} seen {} times".format(wordIndex,
-                                                                               self.rhymeGroups[rhymeGroup][wordIndex]))
+                                                                               rhymeGroups[rhymeGroup][wordIndex]))
                     rhymeGroupQuery += ", `{}Words`.`rhymePool` as {}RhymeGroup ".format(wordIndex, wordIndex)
 
             for wordIndex in self.wordIndices:
                 # SELECT DISTINCT counts of firstWords and/or lastWords
-                if wordIndex in self.rhymeGroups[rhymeGroup]:
+                if wordIndex in rhymeGroups[rhymeGroup]:
                     # If it's been used in this position, SELECT a DISTINCT COUNT within the query
                     self.debugger.message("QRYBLD", ".. Adding DISTINCT COUNT for {}".format(wordIndex))
                     rhymeGroupQuery += ", COUNT(DISTINCT(`tblLines`.`{}`)) as distinct{} ".format(wordIndex, wordIndex)
@@ -198,8 +200,8 @@ class song:
             #     SUM CASE and then filtering with HAVING
 
             # Add full line syllable count SELECTions to the query
-            if ("fullLineSyllables" in self.rhymeGroups[rhymeGroup]):
-                for syllable in self.rhymeGroups[rhymeGroup]["fullLineSyllables"]:
+            if ("fullLineSyllables" in rhymeGroups[rhymeGroup]):
+                for syllable in rhymeGroups[rhymeGroup]["fullLineSyllables"]:
                     rhymeGroupQuery += ", sum(CASE WHEN ( "
                     rhymeGroupQuery += "(`tblLines`.`syllables` >= {}) AND ".format(int(syllable)-self.syllablePadding)
                     rhymeGroupQuery += "(`tblLines`.`syllables` <= {}) ) ".format(int(syllable)+self.syllablePadding)
@@ -211,10 +213,10 @@ class song:
             for wordIndex in self.wordIndices:
                 # INNER JOINING tblRhymeWords
                 # Loop through positions firstWord, lastWord..
-                if wordIndex in self.rhymeGroups[rhymeGroup]:
+                if wordIndex in rhymeGroups[rhymeGroup]:
                     # If it's been used in this position, INNER JOIN that position within the query
                     self.debugger.message("QRYBLD", ".. Adding INNER JOIN for {} seen {} times".format(wordIndex,
-                                                                               self.rhymeGroups[rhymeGroup][wordIndex]))
+                                                                               rhymeGroups[rhymeGroup][wordIndex]))
                     rhymeGroupQuery += "INNER JOIN `tblRhymeWords` {}Words ON `tblLines`.`{}` = `{}Words`.`word` ".\
                         format(wordIndex, wordIndex, wordIndex)
 
@@ -222,9 +224,10 @@ class song:
 
             # Search for any prior selected tblRhymePool IDs.  They should be
             # excluded from all subsequent picks
-            for searchRhymeGroup in self.rhymeGroups:
-                if "rhymePool" in self.rhymeGroups[searchRhymeGroup]:
-                    pastRhymePoolIds[self.rhymeGroups[searchRhymeGroup]["rhymePool"]] = True
+            for searchRhymeGroup in rhymeGroups:
+                if "rhymePoolCandidates" in rhymeGroups[searchRhymeGroup]:
+                    for rhymePoolResult in rhymeGroups[searchRhymeGroup]["rhymePoolCandidates"]:
+                        pastRhymePoolIds[rhymePoolResult] = True
 
             if pastRhymePoolIds:
                 self.debugger.message("QRYBLD", ".. pastRhymePoolIds: {}".format(pastRhymePoolIds))
@@ -237,10 +240,10 @@ class song:
             #   THere are past Rhyme Pool Ids we should exclude
 
             if (
-                ("fullLineSyllables" in self.rhymeGroups[rhymeGroup]) or
-                ("firstWordIncludeOnly" in self.rhymeGroups[rhymeGroup]) or
-                ("lastWordIncludeOnly" in self.rhymeGroups[rhymeGroup]) or
-                ("dualPosition" in self.rhymeGroups[rhymeGroup]) or
+                ("fullLineSyllables" in rhymeGroups[rhymeGroup]) or
+                ("firstWordIncludeOnly" in rhymeGroups[rhymeGroup]) or
+                ("lastWordIncludeOnly" in rhymeGroups[rhymeGroup]) or
+                ("dualPosition" in rhymeGroups[rhymeGroup]) or
                 (pastRhymePoolIds)
                 ):
                 rhymeGroupQuery += "WHERE ( "
@@ -248,10 +251,10 @@ class song:
                 firstWhereClause = True # track for the "AND"s ..
 
                 # Add full line syllable count restrictions to the query
-                if ("fullLineSyllables" in self.rhymeGroups[rhymeGroup]):
+                if ("fullLineSyllables" in rhymeGroups[rhymeGroup]):
                     rhymeGroupQuery += "( " # Open group for syllable count restrictions ((low) AND (high)) OR ((low)..
                     first = True # track for the "OR"s ..
-                    for syllable in self.rhymeGroups[rhymeGroup]["fullLineSyllables"]:
+                    for syllable in rhymeGroups[rhymeGroup]["fullLineSyllables"]:
                         if not first:
                             rhymeGroupQuery += "OR "
                         else:
@@ -264,7 +267,7 @@ class song:
                     firstWhereClause = False # We need an AND for the next WHERE clause, if there is one..
                     rhymeGroupQuery += ") "
 
-                if ("dualPosition" in self.rhymeGroups[rhymeGroup]):
+                if ("dualPosition" in rhymeGroups[rhymeGroup]):
                     # The rhymeGroup appears in both firstWord and lastWord positions, possibly even
                     # in the same line.  So set a query WHERE condition that the firstWord and lastWord cannot
                     # be the same
@@ -276,7 +279,7 @@ class song:
 
                 if (pastRhymePoolIds):
                     # Need to exclude past chosen rhymePoolIds or else it's possible to select
-                    #   the same pool for multiple self.rhymeGroups.
+                    #   the same pool for multiple rhymeGroups.
                     if not firstWhereClause:
                         rhymeGroupQuery += "AND "
                     else:
@@ -287,11 +290,11 @@ class song:
                         # rhymePool IDs.  Also need to do this specifically in the firstWord or lastWord or both
                         # positions depending on how the rhymepool is implicated.
                         # Loop through positions firstWord, lastWord..
-                        if wordIndex in self.rhymeGroups[rhymeGroup]:
+                        if wordIndex in rhymeGroups[rhymeGroup]:
                             # If it's been used in this position, SELECT that position within the query
                             self.debugger.message("QRYBLD", ".. Adding NOT IN on {} id {}".format(wordIndex,
                                                                                                  pastRhymePoolIds))
-                            if (("dualPosition" in self.rhymeGroups[rhymeGroup]) and (wordIndex == "lastWord")):
+                            if (("dualPosition" in rhymeGroups[rhymeGroup]) and (wordIndex == "lastWord")):
                                 # If it's been used in BOTH positions, insert AND between the two WHERE clauses
                                 rhymeGroupQuery += "AND "
                             rhymeGroupQuery += "( {}Words.rhymePool NOT IN (".format(wordIndex)
@@ -305,16 +308,16 @@ class song:
                             rhymeGroupQuery += ") " # END OF NOT IN Number Group
                             rhymeGroupQuery += ") " # END OF NOT IN Clause
 
-                # TODO if ("firstWordIncludeOnly" in self.rhymeGroups[rhymeGroup]):
+                # TODO if ("firstWordIncludeOnly" in rhymeGroups[rhymeGroup]):
                 # Implement later
 
-                # TODO if ("lastWordIncludeOnly" in self.rhymeGroups[rhymeGroup]):
+                # TODO if ("lastWordIncludeOnly" in rhymeGroups[rhymeGroup]):
                 # Implement later
 
-                # TODO if ("firstWordSyllables" in self.rhymeGroups[rhymeGroup]):
+                # TODO if ("firstWordSyllables" in rhymeGroups[rhymeGroup]):
                 # Implement later
 
-                # TODO if ("lastWordSyllables" in self.rhymeGroups[rhymeGroup]):
+                # TODO if ("lastWordSyllables" in rhymeGroups[rhymeGroup]):
                 # Implement later
 
                 rhymeGroupQuery += ") " # end of query WHERE
@@ -324,7 +327,7 @@ class song:
             rhymeGroupQuery += "GROUP BY "
             first = True # To track comma usage
             for wordIndex in self.wordIndices:
-                if wordIndex in self.rhymeGroups[rhymeGroup]:
+                if wordIndex in rhymeGroups[rhymeGroup]:
                     if not first:
                         rhymeGroupQuery += ", "
                     else:
@@ -344,13 +347,13 @@ class song:
             # fruitfully.
             totLines = 0
             for wordIndex in self.wordIndices:
-                if (wordIndex in self.rhymeGroups[rhymeGroup]):
-                    if (self.rhymeGroups[rhymeGroup][wordIndex] > totLines):
-                        totLines = self.rhymeGroups[rhymeGroup][wordIndex]
+                if (wordIndex in rhymeGroups[rhymeGroup]):
+                    if (rhymeGroups[rhymeGroup][wordIndex] > totLines):
+                        totLines = rhymeGroups[rhymeGroup][wordIndex]
                         self.debugger.message("QRYBLD", ".. Position {} seen {} times, totLines: {}".
-                                              format(wordIndex, self.rhymeGroups[rhymeGroup][wordIndex], totLines))
+                                              format(wordIndex, rhymeGroups[rhymeGroup][wordIndex], totLines))
             totLines = int(totLines * self.candidatePoolMultiplier)
-            if ("dualPosition" in self.rhymeGroups[rhymeGroup]):
+            if ("dualPosition" in rhymeGroups[rhymeGroup]):
                 totLines = totLines * 2
 
             rhymeGroupQuery += "(totalLines >= {} ) ".format(totLines)
@@ -358,18 +361,18 @@ class song:
             # Filter minimum distinct firstWord/and-or-lastWords
             for wordIndex in self.wordIndices:
                 # HAVING DISTINCT counts of firstWords and/or lastWords
-                if wordIndex in self.rhymeGroups[rhymeGroup]:
+                if wordIndex in rhymeGroups[rhymeGroup]:
                     # If it's been used in this position, HAVING a DISTINCT COUNT within the query
                     self.debugger.message("QRYBLD", ".. Adding HAVING DISTINCT for {}".format(wordIndex))
                     rhymeGroupQuery += "AND (distinct{} >= {}) ".format(wordIndex, totLines)
 
             # Filter minimum syllable count lines available
                 # Add full line syllable count SELECTions to the query
-                if ("fullLineSyllables" in self.rhymeGroups[rhymeGroup]):
-                    for syllable in self.rhymeGroups[rhymeGroup]["fullLineSyllables"]:
+                if ("fullLineSyllables" in rhymeGroups[rhymeGroup]):
+                    for syllable in rhymeGroups[rhymeGroup]["fullLineSyllables"]:
                         rhymeGroupQuery += "AND (syllables{} >= {}) ".format(syllable, totLines)
 
-            if ("dualPosition" in self.rhymeGroups[rhymeGroup]):
+            if ("dualPosition" in rhymeGroups[rhymeGroup]):
                 rhymeGroupQuery += "AND (firstWordRhymeGroup = lastWordRhymeGroup) "
 
             rhymeGroupQuery += ") " # End of HAVING
@@ -380,45 +383,43 @@ class song:
 
             # Query's ready for rhymePool selection for each rhymeGroup
             # First result, second column of the SELECT will be the assigned rhymePoolId
-            rhymePoolId = self.rhymadexDB.query(rhymeGroupQuery).fetchall()[0][1]
+            rhymePoolIds = self.rhymadexDB.query(rhymeGroupQuery).fetchall()
 
-            self.debugger.message("INFO", "Query returned candidate rhymePoolId: {}".format(rhymePoolId))
-            self.rhymeGroups[rhymeGroup]["rhymePool"] = rhymePoolId
+            self.debugger.message("INFO", "Query returned candidate rhymePoolIds: {}".format(rhymePoolIds))
+            rhymeGroups[rhymeGroup]["rhymePoolCandidates"] = []
+            for rhymeGroupCandidate in rhymePoolIds:
+                rhymeGroups[rhymeGroup]["rhymePoolCandidates"].append(rhymeGroupCandidate[0])
 
         # Debugger summary of rhymeGroup / rhymePoolId processing
         self.debugger.message("INFO", "rhymeGroup processing complete.")
-        for rhymeGroup in self.rhymeGroups:
-            self.debugger.message("INFO", "self.rhymeGroups[\"{}\"]:".format(rhymeGroup))
-            if "rhymePool" in self.rhymeGroups[rhymeGroup]:
-                self.debugger.message("INFO", "..[\"rhymePool\"]: {}".format(
-                                                                        self.rhymeGroups[rhymeGroup]["rhymePool"]))
-            if "fullLineSyllables" in self.rhymeGroups[rhymeGroup]:
+        for rhymeGroup in rhymeGroups:
+            self.debugger.message("INFO", "rhymeGroups[\"{}\"]:".format(rhymeGroup))
+            if "rhymePool" in rhymeGroups[rhymeGroup]:
+                self.debugger.message("INFO", "..[\"rhymePool\"]: {}".format(rhymeGroups[rhymeGroup]["rhymePool"]))
+            if "rhymePoolCandidates" in rhymeGroups[rhymeGroup]:
+                self.debugger.message("INFO", "..[\"rhymePoolCandidates\"]: {}".format(
+                                                                   rhymeGroups[rhymeGroup]["rhymePoolCandidates"]))
+            if "fullLineSyllables" in rhymeGroups[rhymeGroup]:
                 self.debugger.message("INFO", "..[\"fullLineSyllables\"]: {}".format(
-                                                                     self.rhymeGroups[rhymeGroup]["fullLineSyllables"]))
+                                                                     rhymeGroups[rhymeGroup]["fullLineSyllables"]))
             for wordIndex in self.wordIndices:
-                if wordIndex in self.rhymeGroups[rhymeGroup]:
+                if wordIndex in rhymeGroups[rhymeGroup]:
                     self.debugger.message("INFO", "..[\"{}\"]: {} (line occurances)".format(wordIndex,
-                                                                               self.rhymeGroups[rhymeGroup][wordIndex]))
+                                                                               rhymeGroups[rhymeGroup][wordIndex]))
                 for lineOption in self.wordIndices[wordIndex]["options"]:
-                    if wordIndex + lineOption in self.rhymeGroups[rhymeGroup]:
+                    if wordIndex + lineOption in rhymeGroups[rhymeGroup]:
                         self.debugger.message("INFO", "..[\"{}\"]: {}".format(wordIndex + lineOption,
-                                                     self.rhymeGroups[rhymeGroup][wordIndex + lineOption]))
+                                                                  rhymeGroups[rhymeGroup][wordIndex + lineOption]))
 
-    def generateSong(self):
+        # rhymeGroups contains ["rhymePoolCandidates"] for each rhymeGroup e.g. ["A"]
+        #   which is the only important element needed per rhymeGroup.
+        #   There are also a lot of other misc elements stored, from the query formation
+        #   That could all be excluded from the return.
+        #   But doesn't hurt for now, so moving on.
+        return rhymeGroups
 
-
-
-        # Build and execute a tblLine selection query
-        # In progress thinking:
-        # IDEA: I could potentially capture multiple candidate rhymePoolIds at once during the queries
-        # above.  So for each rhymeGroup there could be dozens, hundreds of candidate rhymePoolIds stored
-        # as a list in the rhymeGroup dict.  Then during song formulation below, choose randomly from that pool.
-        # I can retroactively wire that in by continuing to use the same dict index e.g.
-        # self.rhymeGroups["A"]["rhymePool"] as the "chosen" rhymePool for the query, and add a new index like
-        # self.rhymeGroups["A"]["rhymePoolCandidates"] which is a list of all candidates returned from the query above,
-        # and add a block later that populates ["rhymePool"] with a randomly chosen but unique-across-the-song
-        # candidate ID just prior to the line selection query building.
-        # So yeah,
+    def generateSong(self, songDef, rhymeGroups):
+        # Build and execute a tblLine selection queries using the songDef, and build a song
         # Iterate through the songDef.
         # Got a dict of self.rhymeGroups indexed by whatever's in the songDef rhymeGroup index.
         #   So I know the rhymePoolId for this query's WHERE clause
@@ -426,7 +427,9 @@ class song:
         # Add appropriate filter options as they exist in the songDef
         # NOT IN previously selected firstWords/lastWords ..
         # Run the query
-        # Store and display the resulting line and line id
+        # Build the song line-by-line.  If the rhymegroup sequence leads to a dead-end anywhere along the way,
+        #   return FALSE
+        # Or else, return a list containing the completed song.
 
         song = []
 
@@ -437,7 +440,16 @@ class song:
         pastFirstWords = {}
         pastLastWords = {}
 
-        for lineDef in self.songDef:
+        # Validate rhymeGroups input.  This could be done inline below but pulling it to the top
+        #   for clarity.  If there are rhymeGroups defined, there needs to be a ["rhymePool"]
+        #   value defined in order to build the query below.  If that isn't the case,
+        #   just return False now.
+        for rhymeGroup in rhymeGroups:
+            if not "rhymePool" in rhymeGroups[rhymeGroup]:
+                self.debugger.message("INFO", "rhymeGroup {} does not contain a [\"rhymePool\"].  Returning False.")
+                return False
+
+        for lineDef in songDef:
 
             if not lineDef[self.backRefIndices["fullLine"]]:
 
@@ -508,13 +520,13 @@ class song:
                             self.debugger.message("QRYBLD", ".. lineDef[{}]: {}".format(
                                                                               self.wordIndices[wordIndex]["rhymeGroup"],
                                                                     lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]))
-                            self.debugger.message("QRYBLD", ".. self.rhymeGroups[lineDef[{}]][\"rhymePool\"]: {}".
+                            self.debugger.message("QRYBLD", ".. rhymeGroups[lineDef[{}]][\"rhymePool\"]: {}".
                                                                        format(self.wordIndices[wordIndex]["rhymeGroup"],
-                                     self.rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]["rhymePool"]))
+                                     rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]["rhymePool"]))
                             self.debugger.message("QRYBLD", ".. Adding WHERE for {} rhymePool {}".format(wordIndex,
-                                     self.rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]["rhymePool"]))
+                                     rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]["rhymePool"]))
                             songQuery += "({}Words.rhymePool = {}) ".format(wordIndex,
-                                      self.rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]["rhymePool"])
+                                      rhymeGroups[lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]]["rhymePool"])
 
                     # Build exclude WHERE clauses for past rhymewords, so we don't continue getting the same word again
                     #   and again (cause it technically rhymes with itself..)
@@ -566,7 +578,7 @@ class song:
                 if (len(songLine) == 0):
                     # Missed on this line selection query.  Too many restrictions to find a working line.
                     self.debugger.message("INFO", "No lines returned for this line selection query.")
-                    sys.exit("No viable line found matching this definition.  Exiting.")
+                    return False
                 else:
                     songLine = songLine[0]
                     # Add returned firstWord/lastWords associated with a rhymeGroup to the future exclude list
@@ -582,14 +594,71 @@ class song:
                     # Invalid backreference.  there's nothing there
                     self.debugger.message("INFO", "Invalid backreference for fullLine id {}".format(
                                                                               lineDef[self.backRefIndices["fullLine"]]))
-                    sys.exit("Invalid fullLine backreference.  Exiting.")
+                    return False
 
             self.debugger.message("INFO", "Song Line: {}".format(songLine))
             song.append(songLine)
 
         self.debugger.message("INFO", "Completed building song.")
         for songLine in song:
-            self.debugger.message("SONG", songLine[1])
+            if songLine:
+                self.debugger.message("INFO", songLine[1])
+
+        return song
+
+    def printSongDef(self, songDef):
+        lineNum = 0
+        print("* Song Definition:")
+        for lineDef in songDef:
+            print("** Line id {}: ".format(lineNum), end="")
+            for wordIndex in self.wordIndices:
+                if lineDef[self.wordIndices[wordIndex]["rhymeGroup"]]:
+                    print("{} rhymeGroup: {}, ".format(wordIndex, lineDef[self.wordIndices[wordIndex]["rhymeGroup"]])
+                          , end="")
+            if lineDef[self.fullLineIndices["Syllables"]]:
+                print("full-line Syllables: {} +- {}, ".format(lineDef[self.fullLineIndices["Syllables"]],
+                                                               self.syllablePadding), end="")
+            if lineDef[self.backRefIndices["fullLine"]]:
+                print("full-line backRef index: {}, ".format(lineDef[self.backRefIndices["fullLine"]]), end="")
+
+            print("")
+            lineNum += 1
+        print("")
+
+    def printRhymeGroups(self, rhymeGroups):
+        # Print summary of rhymeGroups
+        print("* RhymeGroups Summary:")
+        for rhymeGroup in rhymeGroups:
+            print("rhymeGroups[\"{}\"]: ".format(rhymeGroup), end="")
+            if "rhymePoolCandidates" in rhymeGroups[rhymeGroup]:
+                print("..[\"rhymePoolCandidates\"]: {}".format(rhymeGroups[rhymeGroup]["rhymePoolCandidates"]), end="")
+            print("")
+        print("")
+
+    def printSong(self, song):
+        if (song):
+            for songLine in song:
+                print(songLine[1])
+            print("")
+
+    def generateSongBook(self, songDef, rhymeGroups, songVariations):
+        # Pop rhymePoolCandidates values, if there are any to pop
+
+        self.printSongDef(songDef)
+        self.printRhymeGroups(rhymeGroups)
+
+        for i in range(self.rhymeGroupPoolSize):
+            for rhymeGroup in rhymeGroups:
+                if (("rhymePoolCandidates" in rhymeGroups[rhymeGroup]) and
+                        (len(rhymeGroups[rhymeGroup]["rhymePoolCandidates"]) > 0)):
+                    rhymeGroups[rhymeGroup]["rhymePool"] = rhymeGroups[rhymeGroup]["rhymePoolCandidates"].pop()
+
+            for j in range(songVariations):
+                song = self.generateSong(songDef, rhymeGroups)
+                if (song):
+                    self.printSong(song)
+
+
 
 if __name__ == "__main__":
     songDef = [ [None, None, None, None,   None, 4,    None, "A", None, None, None, None],
@@ -608,6 +677,7 @@ if __name__ == "__main__":
                 [None, None, None, None,   None, None, 5,   None, None, None, None, None] ]
 
     song = song(songDef)
+    song.generateSongBook(song.songDef, song.rhymeGroups, 3)
 
     # Propose a data structure to represent the song lyric composure
     # SongDef = { "settings": { "sources": [ [source 1], [source 2], ... ] },
