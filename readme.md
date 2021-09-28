@@ -47,14 +47,14 @@ port = 3306
 ```
 Pick some texts to feed the rhymadex.  It's going to try and open the txt file as ISO-8859-1.
 
-For example, adding Homer's Odyssey to the rhymadex:
+For example, adding Homer's Odyssey to the `rhymadex_builder.py`:
 
 ```python
 if __name__ == "__main__":
     rhymadex = rhymadex("textsources/odyssey/odyssey.txt")
 ```
 
-Running the builder:
+Running the `rhymadex_builder.py`:
 
 ```
 INFO- Connecting to MariaDB server: (redacted)
