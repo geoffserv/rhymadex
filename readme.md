@@ -284,4 +284,77 @@ rhyme any word position anywhere in the verse.
 * RhymeGroup selection queries are definitely inaccurate.  These need to be refactored.
 * Database schema can probably be optimized by including the rhymePoolID as a column in tblLines itself.
 * RhymeGroup queries are definitely the most slow, dangerously slow for web deployment.  So think about that.
-* Probs a better DBMS than MariaDB for this use case.
+* Probably a better DBMS than MariaDB for this use case overall.
+* Tons of space for more features to implement.
+
+## Fun lyric structures
+
+It's fun to play with weird lyric structures.  For example, weird symmetrically-rhyming sorta haiku-like things:
+
+* Line 0 is 5 syllables, the first word in Rhyme Group "A" and the last word in Rhyme Group "B"
+* Line 1 is 7 syllables, the first word in Rhyme Group "A" and the last word in Rhyme Group "B"
+* Line 2 is 5 syllables, the first word in Rhyme Group "A" and the last word in Rhyme Group "B"
+
+```
+* Song Definition:
+** Line id 0: firstWord rhymeGroup: A, lastWord rhymeGroup: B, full-line Syllables: 5 +- 1, 
+** Line id 1: firstWord rhymeGroup: A, lastWord rhymeGroup: B, full-line Syllables: 7 +- 1, 
+** Line id 2: firstWord rhymeGroup: A, lastWord rhymeGroup: B, full-line Syllables: 5 +- 1, 
+
+[...]
+
+that have been long dead
+at thy rebuke they fled
+sat upon the bed
+
+until this day
+still smiling in the same way
+will tear and go away
+
+you spare no one
+should i lie against my right
+could not go to fight
+
+you won't do it right
+should be put into one
+could he throw no light
+
+say to herself
+i am frightened myself
+stay here yourself
+
+i saw it myself
+pray compose yourself
+slay me thyself
+
+they of that place
+where the sleighs had been left
+pierre hid his face
+
+there was the case
+where was the place
+they shall cover the face
+
+may spread to the other
+slay every man his brother
+i had rather
+
+i had rather
+slay every man his brother
+may spread to the other
+
+could hardly excuse
+you know it's too soon for news
+good for us to do
+
+do even so
+who promptly went mad for no
+two years ago
+
+do even so
+who promptly went mad for no
+two years ago
+
+
+Process finished with exit code 0
+```
