@@ -41,7 +41,8 @@ class debugger:
     def summary(self):
         for stat in self.stats:
             self.message("DEBUG SUMMARY", "{}: {}".format(stat, self.stats[stat]))
-        self.message("DEBUG SUMMARY", "Total Runtime: {} seconds", format((self.messages[-1]["timestamp"] - self.messages[0]["timestamp"])))
+        self.message("DEBUG SUMMARY", "Runtime: {} seconds".format((self.messages[-1]["timestamp"] -
+                                                                    self.messages[0]["timestamp"])))
 
     def progress(self, processed, total):
         if self.printEnabled:
@@ -402,7 +403,8 @@ class rhymadex:
             sourceTextBlob = sourceTextFile.read()
             sourceTextFile.close()
         except OSError as e:
-            self.debugger("ERROR", "OSError when opening file for reading: {}\nOSError: {}".format(self.sourceFile, e))
+            self.debugger.message("ERROR", "OSError when opening file for reading: {}\nOSError: {}".format(
+                                                                                                    self.sourceFile, e))
             exit("Nothing more to do.  Exiting.")
 
         # Capture the data source and get the source primary key ID from the database
@@ -476,7 +478,7 @@ class rhymadex:
                         self.debugger.logStat("DbInsertsLines", 1)
                 else:
                     # firstWord or lastWord is under 1 or over 34 chars long, so pass it by and nothing happens.
-                    self.debugger("TotalDiscardedLines", 1)
+                    self.debugger.logStat("TotalDiscardedLines", 1)
             else:
                 # Line is less than 1 or greater than 255, so pass it by and nothing happens.
                 self.debugger.logStat("WontFitLines", 1)

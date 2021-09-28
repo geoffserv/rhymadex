@@ -7,7 +7,7 @@ from rhymadex_builder import debugger
 from rhymadex_builder import rhymadexMariaDB
 
 class song:
-    def __init__(self, songDef):
+    def __init__(self, songDef, rhymeGroupPoolSize=10):
 
         self.debugger = debugger()
         self.debugger.printEnabled = False
@@ -30,7 +30,7 @@ class song:
         self.candidatePoolMultiplier = 2
 
         # Grab and store this many candidate pools for each RhymeGroup at once
-        self.rhymeGroupPoolSize = 10
+        self.rhymeGroupPoolSize = rhymeGroupPoolSize
 
         # Song attributes
         # The songDef is a list containing the definition settings for each line of the song
@@ -52,7 +52,7 @@ class song:
                                      { "Syllables": 8,
                                        "Exclude": 9,
                                        "IncludeOnly": 10
-                                    }
+                                     }
                                  }
                             }
 
@@ -629,9 +629,10 @@ class song:
         # Print summary of rhymeGroups
         print("* RhymeGroups Summary:")
         for rhymeGroup in rhymeGroups:
-            print("rhymeGroups[\"{}\"]: ".format(rhymeGroup), end="")
+            print("** rhymeGroups[\"{}\"]: ".format(rhymeGroup), end="")
             if "rhymePoolCandidates" in rhymeGroups[rhymeGroup]:
-                print("..[\"rhymePoolCandidates\"]: {}".format(rhymeGroups[rhymeGroup]["rhymePoolCandidates"]), end="")
+                print("..[\"rhymePoolCandidates\"]: Pool IDs {}".format(rhymeGroups[rhymeGroup]["rhymePoolCandidates"]),
+                      end="")
             print("")
         print("")
 
@@ -653,31 +654,31 @@ class song:
                         (len(rhymeGroups[rhymeGroup]["rhymePoolCandidates"]) > 0)):
                     rhymeGroups[rhymeGroup]["rhymePool"] = rhymeGroups[rhymeGroup]["rhymePoolCandidates"].pop()
 
-            for j in range(songVariations):
-                song = self.generateSong(songDef, rhymeGroups)
-                if (song):
-                    self.printSong(song)
+                    for j in range(songVariations):
+                        song = self.generateSong(songDef, rhymeGroups)
+                        if (song):
+                            self.printSong(song)
 
 
 
 if __name__ == "__main__":
-    songDef = [ [None, None, None, None,   None, 4,    None, "A", None, None, None, None],
-                [None, None, None, None,   None, 8,    None, "A", None, None, None, None],
-                [None, None, None, None,   None, 3,    None, "B", None, None, None, None],
-                [None, None, None, None,   None, 3,    None, "B", None, None, None, None],
-                [None, None, None, None,   None, 9,    None, "A", None, None, None, None],
-                [None, None, None, None,   None, 6,    None, "C", None, None, None, None],
-                [None, None, None, None,   None, None, 5,   None, None, None, None, None],
-                [None, None, None, None,   None, 6,    None, "D", None, None, None, None],
-                [None, None, None, None,   None, 7,    None, "D", None, None, None, None],
-                [None, None, None, None,   None, 2,    None, "E", None, None, None, None],
-                [None, None, None, None,   None, 3,    None, "E", None, None, None, None],
-                [None, None, None, None,   None, 9,    None, "D", None, None, None, None],
-                [None, None, None, None,   None, None, 5,   None, None, None, None, None],
-                [None, None, None, None,   None, None, 5,   None, None, None, None, None] ]
+    songDef = [ [None, None, None, None, None,    9, None,  "A", None, None, None, None],
+                [None, None, None, None, None,    6, None,  "A", None, None, None, None],
+                [None, None, None, None, None,    9, None,  "B", None, None, None, None],
+                [None, None, None, None, None,    6, None,  "B", None, None, None, None],
+                [None, None, None, None, None,    2, None,  "A", None, None, None, None],
+                [None, None, None, None, None,    2, None,  "C", None, None, None, None],
+                [None, None, None, None, None, None,    5, None, None, None, None, None],
+                [None, None, None, None, None,    9, None,  "D", None, None, None, None],
+                [None, None, None, None, None,    6, None,  "D", None, None, None, None],
+                [None, None, None, None, None,    9, None,  "E", None, None, None, None],
+                [None, None, None, None, None,    6, None,  "E", None, None, None, None],
+                [None, None, None, None, None,    2, None,  "D", None, None, None, None],
+                [None, None, None, None, None, None,    5, None, None, None, None, None],
+                [None, None, None, None, None, None,    5, None, None, None, None, None] ]
 
-    song = song(songDef)
-    song.generateSongBook(song.songDef, song.rhymeGroups, 3)
+    song = song(songDef, 10)
+    song.generateSongBook(song.songDef, song.rhymeGroups, 8)
 
     # Propose a data structure to represent the song lyric composure
     # SongDef = { "settings": { "sources": [ [source 1], [source 2], ... ] },
